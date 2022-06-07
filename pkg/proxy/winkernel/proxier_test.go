@@ -129,6 +129,14 @@ func (hns fakeHNS) deleteLoadBalancer(hnsID string) error {
 	return nil
 }
 
+//
+//syncPeriod 	  30 * time.Second
+//minSyncPeriod   30 * time.Second
+//clusterCIDR     "192.168.1.0/24"
+//hostname		  "testhost"
+//nodeIP		  "10.0.0.1"
+//networkType     "overlay" or "l2bridge"
+
 func NewFakeProxier(hnsfake *fakeHNS, networkType string) *Proxier {
 	sourceVip := "192.168.1.2"
 	hnsNetworkInfo := &hnsNetworkInfo{

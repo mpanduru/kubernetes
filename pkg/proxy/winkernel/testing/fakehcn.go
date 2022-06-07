@@ -35,7 +35,6 @@ func (HCN FakeHCN) GetNetworkByName(networkName string) (*hcn.HostComputeNetwork
 		Name: networkName,
 		Type: "overlay",
 	}, nil
-
 }
 
 func (HCN FakeHCN) ListEndpointsOfNetwork(networkId string) ([]hcn.HostComputeEndpoint, error) {
