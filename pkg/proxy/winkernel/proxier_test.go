@@ -130,12 +130,12 @@ func (hns fakeHNS) deleteLoadBalancer(hnsID string) error {
 }
 
 //
-//syncPeriod 	  30 * time.Second
-//minSyncPeriod   30 * time.Second
-//clusterCIDR     "192.168.1.0/24"
-//hostname		  "testhost"
-//nodeIP		  "10.0.0.1"
-//networkType     "overlay" or "l2bridge"
+//syncPeriod 	  30 seconds
+//minSyncPeriod   30 seconds
+//clusterCIDR     192.168.1.0/24
+//hostname		  testhost
+//nodeIP		  10.0.0.1
+//networkType     overlay or l2bridge
 
 func NewFakeProxier(hnsfake *fakeHNS, networkType string) *Proxier {
 	sourceVip := "192.168.1.2"
@@ -723,6 +723,8 @@ func TestCreateLoadBalancer(t *testing.T) {
 			t.Errorf("%v does not match %v", svcInfo.hnsID, guid)
 		}
 	}
+
+	//LoadBalancer2 :=
 
 	// diff := assertHCNDiff(*LoadBalancer1, *LoadBalancer2)
 	// if diff != "" {

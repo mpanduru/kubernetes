@@ -34,6 +34,34 @@ func (HCN FakeHCN) GetNetworkByName(networkName string) (*hcn.HostComputeNetwork
 		Id:   guid,
 		Name: networkName,
 		Type: "overlay",
+		MacPool: hcn.MacPool{
+			Ranges: []hcn.MacRange{
+				{
+					StartMacAddress: "00-15-5D-52-C0-00",
+					EndMacAddress:   "00-15-5D-52-CF-FF",
+				},
+			},
+		},
+		Ipams: []hcn.Ipam{
+			{
+				Type: "Static",
+				Subnets: []hcn.Subnet{
+					{
+						IpAddressPrefix: "192.168.1.0/24",
+						Routes: []hcn.Route{
+							{
+								NextHop:           "192.168.1.1",
+								DestinationPrefix: "0.0.0.0/0",
+							},
+						},
+					},
+				},
+			},
+		},
+		SchemaVersion: hcn.SchemaVersion{
+			Major: 2,
+			Minor: 0,
+		},
 	}, nil
 }
 
@@ -114,6 +142,7 @@ func (HCN FakeHCN) CreateEndpoint(endpoint *hcn.HostComputeEndpoint) (*hcn.HostC
 		MacAddress:         endpoint.MacAddress,
 		Flags:              hcn.EndpointFlagsNone,
 		SchemaVersion:      endpoint.SchemaVersion,
+		Health:             endpoint.Health,
 	}
 
 	HCN.endpoints = append(HCN.endpoints, newEndpoint)
@@ -130,6 +159,7 @@ func (HCN FakeHCN) CreateRemoteEndpoint(endpoint *hcn.HostComputeEndpoint) (*hcn
 		MacAddress:         endpoint.MacAddress,
 		Flags:              hcn.EndpointFlagsRemoteEndpoint | endpoint.Flags,
 		SchemaVersion:      endpoint.SchemaVersion,
+		Health:             endpoint.Health,
 	}
 
 	HCN.endpoints = append(HCN.endpoints, newEndpoint)
@@ -143,9 +173,25 @@ func (HCN FakeHCN) CreateLoadBalancer(loadbalancer *hcn.HostComputeLoadBalancer)
 		HostComputeEndpoints: loadbalancer.HostComputeEndpoints,
 		SourceVIP:            loadbalancer.SourceVIP,
 		Flags:                loadbalancer.Flags,
+		PortMappings:         loadbalancer.PortMappings,
+		FrontendVIPs:         loadbalancer.FrontendVIPs,
+		SchemaVersion:        loadbalancer.SchemaVersion,
 	}
 
 	HCN.loadbalancers = append(HCN.loadbalancers, newLoadBalancer)
 
 	return newLoadBalancer, nil
+}
+
+func (HCN FakeHCN) DeleteLoadBalancer(loadbalancer *hcn.HostComputeLoadBalancer) {
+	var i int
+
+	for _, lb := range HCN.loadbalancers {
+		i++
+		if lb.Id == loadbalancer.Id {
+			break
+		}
+	}
+
+	HCN.loadbalancers = append(HCN.loadbalancers[:i], HCN.loadbalancers[i+1:]...)
 }
