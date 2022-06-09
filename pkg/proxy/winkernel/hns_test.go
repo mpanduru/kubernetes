@@ -74,7 +74,7 @@ func assertHCNDiff(x, y interface{}) string {
 }
 
 func TestGetNetworkByName(t *testing.T) {
-	hcnutils := hcnutils{}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 
 	network, err := hcnutils.getNetworkByName(Network.Name)
@@ -102,7 +102,7 @@ func TestGetNetworkByName(t *testing.T) {
 	}
 }
 func TestGetEndpointByID(t *testing.T) {
-	hcnutils := hcnutils{}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 
 	ipConfig := &hcn.IpConfig{
@@ -150,7 +150,7 @@ func TestGetEndpointByID(t *testing.T) {
 	}
 }
 func TestGetEndpointByIpAddressAndName(t *testing.T) {
-	hcnutils := hcnutils{}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 
 	ipConfig := &hcn.IpConfig{
@@ -209,7 +209,7 @@ func TestGetEndpointByIpAddressAndName(t *testing.T) {
 	}
 }
 func TestCreateEndpointLocal(t *testing.T) {
-	hcnutils := hcnutils{}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 
 	expectedEndpoint := &hcn.HostComputeEndpoint{
@@ -261,7 +261,7 @@ func TestCreateEndpointLocal(t *testing.T) {
 	}
 }
 func TestCreateEndpointRemote(t *testing.T) {
-	hcnutils := hcnutils{}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 	providerAddress := epPaAddress
 
@@ -325,7 +325,7 @@ func TestCreateEndpointRemote(t *testing.T) {
 	}
 }
 func TestDeleteEndpoint(t *testing.T) {
-	hcnutils := hcnutils{}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 
 	ipConfig := &hcn.IpConfig{
@@ -360,7 +360,7 @@ func TestDeleteEndpoint(t *testing.T) {
 }
 
 func TestGetLoadBalancerExisting(t *testing.T) {
-	hcnutils := hcnutils{}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 	lbs := make(map[loadBalancerIdentifier]*(loadBalancerInfo))
 
@@ -433,7 +433,7 @@ func TestGetLoadBalancerExisting(t *testing.T) {
 	}
 }
 func TestGetLoadBalancerNew(t *testing.T) {
-	hcnutils := hcnutils{}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 	// We keep this empty to ensure we test for new load balancer creation.
 	lbs := make(map[loadBalancerIdentifier]*(loadBalancerInfo))
@@ -485,7 +485,7 @@ func TestGetLoadBalancerNew(t *testing.T) {
 	}
 }
 func TestDeleteLoadBalancer(t *testing.T) {
-	hcnutils := hcnutils{}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 
 	ipConfig := &hcn.IpConfig{

@@ -26,10 +26,34 @@ import (
 	"github.com/Microsoft/hcsshim"
 	"github.com/Microsoft/hcsshim/hcn"
 	"k8s.io/klog/v2"
-	"k8s.io/kubernetes/pkg/proxy/winkernel/testing"
 
 	"strings"
 )
+
+type HCN interface {
+	GetNetworkByName(networkName string) (*hcn.HostComputeNetwork, error)
+	ListEndpointsOfNetwork(networkId string) ([]hcn.HostComputeEndpoint, error)
+	GetEndpointByID(endpointId string) (*hcn.HostComputeEndpoint, error)
+	ListEndpoints() ([]hcn.HostComputeEndpoint, error)
+	GetEndpointByName(endpointName string) (*hcn.HostComputeEndpoint, error)
+	ListLoadBalancers() ([]hcn.HostComputeLoadBalancer, error)
+	GetLoadBalancerByID(loadBalancerId string) (*hcn.HostComputeLoadBalancer, error)
+	CreateEndpoint(endpoint *hcn.HostComputeEndpoint, network *hcn.HostComputeNetwork) (*hcn.HostComputeEndpoint, error)
+	CreateLoadBalancer(loadbalancer *hcn.HostComputeLoadBalancer) (*hcn.HostComputeLoadBalancer, error)
+	CreateRemoteEndpoint(endpoint *hcn.HostComputeEndpoint, network *hcn.HostComputeNetwork) (*hcn.HostComputeEndpoint, error)
+	DeleteLoadBalancer(loadbalancer *hcn.HostComputeLoadBalancer) error
+	DeleteEndpoint(endpoint *hcn.HostComputeEndpoint) error
+}
+
+type ihcn struct{}
+
+type hcnutils struct {
+	hcninstance HCN
+}
+
+func NewHCNUtils(hcnImpl HCN) *hcnutils {
+	return &hcnutils{hcnImpl}
+}
 
 type HCNUtils interface {
 	getNetworkByName(name string) (*hnsNetworkInfo, error)
@@ -44,21 +68,13 @@ type HCNUtils interface {
 	deleteLoadBalancer(hnsID string) error
 }
 
-type hcnutils struct {
-	hcn *testing.FakeHCN
-}
-
 var (
 	// LoadBalancerFlagsIPv6 enables IPV6.
 	LoadBalancerFlagsIPv6 hcn.LoadBalancerFlags = 2
 )
 
-func (hcnUtils *hcnutils) Init() {
-	hcnUtils.hcn = testing.NewFakeHCN()
-}
-
 func (hns hcnutils) getNetworkByName(name string) (*hnsNetworkInfo, error) {
-	hnsnetwork, err := hcn.GetNetworkByName(name)
+	hnsnetwork, err := hns.hcninstance.GetNetworkByName(name)
 	if err != nil {
 		klog.ErrorS(err, "Error getting network by name")
 		return nil, err
@@ -91,12 +107,12 @@ func (hns hcnutils) getNetworkByName(name string) (*hnsNetworkInfo, error) {
 }
 
 func (hns hcnutils) getAllEndpointsByNetwork(networkName string) (map[string]*(endpointsInfo), error) {
-	hcnnetwork, err := hcn.GetNetworkByName(networkName)
+	hcnnetwork, err := hns.hcninstance.GetNetworkByName(networkName)
 	if err != nil {
 		klog.ErrorS(err, "failed to get HNS network by name", "name", networkName)
 		return nil, err
 	}
-	endpoints, err := hcn.ListEndpointsOfNetwork(hcnnetwork.Id)
+	endpoints, err := hns.hcninstance.ListEndpointsOfNetwork(hcnnetwork.Id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list endpoints: %w", err)
 	}
@@ -123,7 +139,7 @@ func (hns hcnutils) getAllEndpointsByNetwork(networkName string) (map[string]*(e
 }
 
 func (hns hcnutils) getEndpointByID(id string) (*endpointsInfo, error) {
-	hnsendpoint, err := hcn.GetEndpointByID(id)
+	hnsendpoint, err := hns.hcninstance.GetEndpointByID(id)
 	if err != nil {
 		return nil, err
 	}
@@ -136,13 +152,13 @@ func (hns hcnutils) getEndpointByID(id string) (*endpointsInfo, error) {
 	}, nil
 }
 func (hns hcnutils) getEndpointByIpAddress(ip string, networkName string) (*endpointsInfo, error) {
-	hnsnetwork, err := hcn.GetNetworkByName(networkName)
+	hnsnetwork, err := hns.hcninstance.GetNetworkByName(networkName)
 	if err != nil {
 		klog.ErrorS(err, "Error getting network by name")
 		return nil, err
 	}
 
-	endpoints, err := hcn.ListEndpoints()
+	endpoints, err := hns.hcninstance.ListEndpoints()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list endpoints: %w", err)
 	}
@@ -168,7 +184,7 @@ func (hns hcnutils) getEndpointByIpAddress(ip string, networkName string) (*endp
 	return nil, fmt.Errorf("Endpoint %v not found on network %s", ip, networkName)
 }
 func (hns hcnutils) getEndpointByName(name string) (*endpointsInfo, error) {
-	hnsendpoint, err := hcn.GetEndpointByName(name)
+	hnsendpoint, err := hns.hcninstance.GetEndpointByName(name)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +198,7 @@ func (hns hcnutils) getEndpointByName(name string) (*endpointsInfo, error) {
 	}, nil
 }
 func (hns hcnutils) createEndpoint(ep *endpointsInfo, networkName string) (*endpointsInfo, error) {
-	hnsNetwork, err := hcn.GetNetworkByName(networkName)
+	hnsNetwork, err := hns.hcninstance.GetNetworkByName(networkName)
 	if err != nil {
 		return nil, err
 	}
@@ -219,12 +235,12 @@ func (hns hcnutils) createEndpoint(ep *endpointsInfo, networkName string) (*endp
 			}
 			hnsEndpoint.Policies = append(hnsEndpoint.Policies, paPolicy)
 		}
-		createdEndpoint, err = hnsNetwork.CreateRemoteEndpoint(hnsEndpoint)
+		createdEndpoint, err = hns.hcninstance.CreateRemoteEndpoint(hnsEndpoint, hnsNetwork)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		createdEndpoint, err = hnsNetwork.CreateEndpoint(hnsEndpoint)
+		createdEndpoint, err = hns.hcninstance.CreateEndpoint(hnsEndpoint, hnsNetwork)
 		if err != nil {
 			return nil, err
 		}
@@ -239,11 +255,11 @@ func (hns hcnutils) createEndpoint(ep *endpointsInfo, networkName string) (*endp
 	}, nil
 }
 func (hns hcnutils) deleteEndpoint(hnsID string) error {
-	hnsendpoint, err := hcn.GetEndpointByID(hnsID)
+	hnsendpoint, err := hns.hcninstance.GetEndpointByID(hnsID)
 	if err != nil {
 		return err
 	}
-	err = hnsendpoint.Delete()
+	err = hns.hcninstance.DeleteEndpoint(hnsendpoint)
 	if err == nil {
 		klog.V(3).InfoS("Remote endpoint resource deleted", "hnsID", hnsID)
 	}
@@ -251,7 +267,7 @@ func (hns hcnutils) deleteEndpoint(hnsID string) error {
 }
 
 func (hns hcnutils) getAllLoadBalancers() (map[loadBalancerIdentifier]*loadBalancerInfo, error) {
-	lbs, err := hcn.ListLoadBalancers()
+	lbs, err := hns.hcninstance.ListLoadBalancers()
 	var id loadBalancerIdentifier
 	if err != nil {
 		return nil, err
@@ -340,7 +356,7 @@ func (hns hcnutils) getLoadBalancer(endpoints []endpointsInfo, flags loadBalance
 		loadBalancer.HostComputeEndpoints = append(loadBalancer.HostComputeEndpoints, ep.hnsID)
 	}
 
-	lb, err := loadBalancer.Create()
+	lb, err := hns.hcninstance.CreateLoadBalancer(loadBalancer)
 
 	if err != nil {
 		return nil, err
@@ -356,13 +372,13 @@ func (hns hcnutils) getLoadBalancer(endpoints []endpointsInfo, flags loadBalance
 }
 
 func (hns hcnutils) deleteLoadBalancer(hnsID string) error {
-	lb, err := hcn.GetLoadBalancerByID(hnsID)
+	lb, err := hns.hcninstance.GetLoadBalancerByID(hnsID)
 	if err != nil {
 		// Return silently
 		return nil
 	}
 
-	err = lb.Delete()
+	err = hns.hcninstance.DeleteLoadBalancer(lb)
 	return err
 }
 
@@ -402,4 +418,52 @@ func getHnsNetworkInfo(hnsNetworkName string) (*hnsNetworkInfo, error) {
 		name:        hnsnetwork.Name,
 		networkType: hnsnetwork.Type,
 	}, nil
+}
+
+func (h *ihcn) GetNetworkByName(networkName string) (*hcn.HostComputeNetwork, error) {
+	return hcn.GetNetworkByName(networkName)
+}
+
+func (h *ihcn) ListEndpointsOfNetwork(networkId string) ([]hcn.HostComputeEndpoint, error) {
+	return hcn.ListEndpointsOfNetwork(networkId)
+}
+
+func (h *ihcn) GetEndpointByID(endpointId string) (*hcn.HostComputeEndpoint, error) {
+	return hcn.GetEndpointByID(endpointId)
+}
+
+func (h *ihcn) ListEndpoints() ([]hcn.HostComputeEndpoint, error) {
+	return hcn.ListEndpoints()
+}
+
+func (h *ihcn) GetEndpointByName(endpointName string) (*hcn.HostComputeEndpoint, error) {
+	return hcn.GetEndpointByName(endpointName)
+}
+
+func (h *ihcn) ListLoadBalancers() ([]hcn.HostComputeLoadBalancer, error) {
+	return hcn.ListLoadBalancers()
+}
+
+func (h *ihcn) GetLoadBalancerByID(loadBalancerId string) (*hcn.HostComputeLoadBalancer, error) {
+	return hcn.GetLoadBalancerByID(loadBalancerId)
+}
+
+func (h *ihcn) CreateEndpoint(endpoint *hcn.HostComputeEndpoint, network *hcn.HostComputeNetwork) (*hcn.HostComputeEndpoint, error) {
+	return network.CreateEndpoint(endpoint)
+}
+
+func (h *ihcn) CreateRemoteEndpoint(endpoint *hcn.HostComputeEndpoint, network *hcn.HostComputeNetwork) (*hcn.HostComputeEndpoint, error) {
+	return network.CreateRemoteEndpoint(endpoint)
+}
+
+func (h *ihcn) CreateLoadBalancer(loadbalancer *hcn.HostComputeLoadBalancer) (*hcn.HostComputeLoadBalancer, error) {
+	return loadbalancer.Create()
+}
+
+func (h *ihcn) DeleteLoadBalancer(loadbalancer *hcn.HostComputeLoadBalancer) error {
+	return loadbalancer.Delete()
+}
+
+func (h *ihcn) DeleteEndpoint(endpoint *hcn.HostComputeEndpoint) error {
+	return endpoint.Delete()
 }
