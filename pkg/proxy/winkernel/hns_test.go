@@ -467,6 +467,31 @@ func TestGetLoadBalancerNew(t *testing.T) {
 		t.Errorf("%v does not match %v", lb.hnsID, LoadBalancer.Id)
 	}
 
+	expectedLoadBalancer := &hcn.HostComputeLoadBalancer{
+		HostComputeEndpoints: []string{endpoint.hnsID},
+		SourceVIP:            sourceVip,
+		Flags:                hcn.LoadBalancerFlagsNone,
+		FrontendVIPs:         []string{serviceVip},
+		PortMappings: []hcn.LoadBalancerPortMapping{
+			{
+				Protocol:         uint32(protocol),
+				InternalPort:     internalPort,
+				ExternalPort:     externalPort,
+				DistributionType: hcn.LoadBalancerDistributionNone,
+				Flags:            hcn.LoadBalancerPortMappingFlagsNone,
+			},
+		},
+		SchemaVersion: hcn.Version{
+			Major: 2,
+			Minor: 0,
+		},
+	}
+
+	diff := assertHCNDiff(*LoadBalancer, *expectedLoadBalancer)
+	if diff != "" {
+		t.Errorf("getLoadBalancerByID(%s) returned a different LoadBalancer. Diff: %s ", LoadBalancer.Id, diff)
+	}
+
 	err = LoadBalancer.Delete()
 	if err != nil {
 		t.Error(err)
