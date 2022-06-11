@@ -89,8 +89,15 @@ func (HCN *FakeHCN) GetEndpointByID(endpointId string) (*hcn.HostComputeEndpoint
 			endpoint.Id = endpointId
 			endpoint.Name = ep.Name
 			endpoint.HostComputeNetwork = ep.HostComputeNetwork
-			endpoint.Health = ep.Health
+			endpoint.HostComputeNamespace = ep.HostComputeNamespace
 			endpoint.IpConfigurations = ep.IpConfigurations
+			endpoint.Policies = ep.Policies
+			endpoint.Dns = ep.Dns
+			endpoint.Routes = ep.Routes
+			endpoint.MacAddress = ep.MacAddress
+			endpoint.Flags = ep.Flags
+			endpoint.Health = ep.Health
+			endpoint.SchemaVersion = ep.SchemaVersion
 		}
 	}
 	return endpoint, nil
@@ -114,6 +121,13 @@ func (HCN *FakeHCN) GetEndpointByName(endpointName string) (*hcn.HostComputeEndp
 			endpoint.HostComputeNetwork = ep.HostComputeNetwork
 			endpoint.Health = ep.Health
 			endpoint.IpConfigurations = ep.IpConfigurations
+			endpoint.HostComputeNamespace = ep.HostComputeNamespace
+			endpoint.Policies = ep.Policies
+			endpoint.Dns = ep.Dns
+			endpoint.Routes = ep.Routes
+			endpoint.MacAddress = ep.MacAddress
+			endpoint.Flags = ep.Flags
+			endpoint.SchemaVersion = ep.SchemaVersion
 		}
 	}
 	return endpoint, nil
@@ -135,6 +149,9 @@ func (HCN *FakeHCN) GetLoadBalancerByID(loadBalancerId string) (*hcn.HostCompute
 			loadbalancer.Flags = lb.Flags
 			loadbalancer.HostComputeEndpoints = lb.HostComputeEndpoints
 			loadbalancer.SourceVIP = lb.SourceVIP
+			loadbalancer.SchemaVersion = lb.SchemaVersion
+			loadbalancer.PortMappings = lb.PortMappings
+			loadbalancer.FrontendVIPs = lb.FrontendVIPs
 		}
 	}
 	return loadbalancer, nil
@@ -142,13 +159,18 @@ func (HCN *FakeHCN) GetLoadBalancerByID(loadBalancerId string) (*hcn.HostCompute
 
 func (HCN *FakeHCN) CreateEndpoint(endpoint *hcn.HostComputeEndpoint, network *hcn.HostComputeNetwork) (*hcn.HostComputeEndpoint, error) {
 	newEndpoint := &hcn.HostComputeEndpoint{
-		Id:                 guid,
-		Name:               endpoint.Name,
-		HostComputeNetwork: guid,
-		IpConfigurations:   endpoint.IpConfigurations,
-		MacAddress:         endpoint.MacAddress,
-		Flags:              hcn.EndpointFlagsNone,
-		SchemaVersion:      endpoint.SchemaVersion,
+		Id:                   guid,
+		Name:                 endpoint.Name,
+		HostComputeNetwork:   guid,
+		IpConfigurations:     endpoint.IpConfigurations,
+		MacAddress:           endpoint.MacAddress,
+		Flags:                hcn.EndpointFlagsNone,
+		SchemaVersion:        endpoint.SchemaVersion,
+		Policies:             endpoint.Policies,
+		HostComputeNamespace: endpoint.HostComputeNamespace,
+		Dns:                  endpoint.Dns,
+		Routes:               endpoint.Routes,
+		Health:               endpoint.Health,
 	}
 
 	HCN.Endpoints = append(HCN.Endpoints, newEndpoint)
@@ -158,13 +180,18 @@ func (HCN *FakeHCN) CreateEndpoint(endpoint *hcn.HostComputeEndpoint, network *h
 
 func (HCN *FakeHCN) CreateRemoteEndpoint(endpoint *hcn.HostComputeEndpoint, network *hcn.HostComputeNetwork) (*hcn.HostComputeEndpoint, error) {
 	newEndpoint := &hcn.HostComputeEndpoint{
-		Id:                 guid,
-		Name:               endpoint.Name,
-		HostComputeNetwork: guid,
-		IpConfigurations:   endpoint.IpConfigurations,
-		MacAddress:         endpoint.MacAddress,
-		Flags:              hcn.EndpointFlagsRemoteEndpoint | endpoint.Flags,
-		SchemaVersion:      endpoint.SchemaVersion,
+		Id:                   guid,
+		Name:                 endpoint.Name,
+		HostComputeNetwork:   guid,
+		IpConfigurations:     endpoint.IpConfigurations,
+		MacAddress:           endpoint.MacAddress,
+		Flags:                hcn.EndpointFlagsRemoteEndpoint | endpoint.Flags,
+		SchemaVersion:        endpoint.SchemaVersion,
+		Policies:             endpoint.Policies,
+		HostComputeNamespace: endpoint.HostComputeNamespace,
+		Dns:                  endpoint.Dns,
+		Routes:               endpoint.Routes,
+		Health:               endpoint.Health,
 	}
 
 	HCN.Endpoints = append(HCN.Endpoints, newEndpoint)
@@ -178,6 +205,9 @@ func (HCN *FakeHCN) CreateLoadBalancer(loadbalancer *hcn.HostComputeLoadBalancer
 		HostComputeEndpoints: loadbalancer.HostComputeEndpoints,
 		SourceVIP:            loadbalancer.SourceVIP,
 		Flags:                loadbalancer.Flags,
+		FrontendVIPs:         loadbalancer.FrontendVIPs,
+		PortMappings:         loadbalancer.PortMappings,
+		SchemaVersion:        loadbalancer.SchemaVersion,
 	}
 
 	HCN.Loadbalancers = append(HCN.Loadbalancers, newLoadBalancer)

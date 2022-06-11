@@ -24,6 +24,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Microsoft/hcsshim/hcn"
 	v1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -201,6 +202,28 @@ func TestCreateRemoteEndpointOverlay(t *testing.T) {
 	if *proxier.endPointsRefCount[guid] != *epInfo.refCount {
 		t.Errorf("Global refCount: %v does not match endpoint refCount: %v", *proxier.endPointsRefCount[guid], *epInfo.refCount)
 	}
+
+	expectedEndpoint := &hcn.HostComputeEndpoint{
+		Id:                 guid,
+		HostComputeNetwork: guid,
+		SchemaVersion: hcn.SchemaVersion{
+			Major: 2,
+			Minor: 0,
+		},
+		IpConfigurations: []hcn.IpConfig{{IpAddress: epIpAddressRemote, PrefixLength: 24}},
+		Flags:            hcn.EndpointFlagsRemoteEndpoint,
+	}
+
+	Endpoint, err := testHNS.hcninstance.GetEndpointByID(guid)
+
+	if err != nil {
+		t.Error(err)
+	}
+
+	diff := assertHCNDiff(*expectedEndpoint, *Endpoint)
+	if diff != "" {
+		t.Errorf("GetEndpointById(%s) returned a different Endpoint. Diff: %s ", expectedEndpoint.Id, diff)
+	}
 }
 
 func TestCreateRemoteEndpointL2Bridge(t *testing.T) {
@@ -265,151 +288,174 @@ func TestCreateRemoteEndpointL2Bridge(t *testing.T) {
 	if *proxier.endPointsRefCount[guid] != *epInfo.refCount {
 		t.Errorf("Global refCount: %v does not match endpoint refCount: %v", *proxier.endPointsRefCount[guid], *epInfo.refCount)
 	}
+
+	expectedEndpoint := &hcn.HostComputeEndpoint{
+		Id:                 guid,
+		HostComputeNetwork: guid,
+		SchemaVersion: hcn.SchemaVersion{
+			Major: 2,
+			Minor: 0,
+		},
+		IpConfigurations: []hcn.IpConfig{{IpAddress: epIpAddressRemote, PrefixLength: 24}},
+		Flags:            hcn.EndpointFlagsRemoteEndpoint,
+	}
+
+	Endpoint, err := testHNS.hcninstance.GetEndpointByID(guid)
+
+	if err != nil {
+		t.Error(err)
+	}
+
+	diff := assertHCNDiff(*expectedEndpoint, *Endpoint)
+	if diff != "" {
+		t.Errorf("GetEndpointById(%s) returned a different Endpoint. Diff: %s ", expectedEndpoint.Id, diff)
+	}
 }
 
-// func TestSharedRemoteEndpointDelete(t *testing.T) {
-// 	tcpProtocol := v1.ProtocolTCP
-// 	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
-// 	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_L2BRIDGE)
-// 	if proxier == nil {
-// 		t.Error()
-// 	}
+func TestSharedRemoteEndpointDelete(t *testing.T) {
+	tcpProtocol := v1.ProtocolTCP
+	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
+	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_L2BRIDGE)
+	if proxier == nil {
+		t.Error()
+	}
 
-// 	svcIP1 := "10.20.30.41"
-// 	svcPort1 := 80
-// 	svcNodePort1 := 3001
-// 	svcPortName1 := proxy.ServicePortName{
-// 		NamespacedName: makeNSN("ns1", "svc1"),
-// 		Port:           "p80",
-// 		Protocol:       v1.ProtocolTCP,
-// 	}
+	svcIP1 := "10.20.30.41"
+	svcPort1 := 80
+	svcNodePort1 := 3001
+	svcPortName1 := proxy.ServicePortName{
+		NamespacedName: makeNSN("ns1", "svc1"),
+		Port:           "p80",
+		Protocol:       v1.ProtocolTCP,
+	}
 
-// 	svcIP2 := "10.20.30.42"
-// 	svcPort2 := 80
-// 	svcNodePort2 := 3002
-// 	svcPortName2 := proxy.ServicePortName{
-// 		NamespacedName: makeNSN("ns1", "svc2"),
-// 		Port:           "p80",
-// 		Protocol:       v1.ProtocolTCP,
-// 	}
+	svcIP2 := "10.20.30.42"
+	svcPort2 := 80
+	svcNodePort2 := 3002
+	svcPortName2 := proxy.ServicePortName{
+		NamespacedName: makeNSN("ns1", "svc2"),
+		Port:           "p80",
+		Protocol:       v1.ProtocolTCP,
+	}
 
-// 	makeServiceMap(proxier,
-// 		makeTestService(svcPortName1.Namespace, svcPortName1.Name, func(svc *v1.Service) {
-// 			svc.Spec.Type = "NodePort"
-// 			svc.Spec.ClusterIP = svcIP1
-// 			svc.Spec.Ports = []v1.ServicePort{{
-// 				Name:     svcPortName1.Port,
-// 				Port:     int32(svcPort1),
-// 				Protocol: v1.ProtocolTCP,
-// 				NodePort: int32(svcNodePort1),
-// 			}}
-// 		}),
-// 		makeTestService(svcPortName2.Namespace, svcPortName2.Name, func(svc *v1.Service) {
-// 			svc.Spec.Type = "NodePort"
-// 			svc.Spec.ClusterIP = svcIP2
-// 			svc.Spec.Ports = []v1.ServicePort{{
-// 				Name:     svcPortName2.Port,
-// 				Port:     int32(svcPort2),
-// 				Protocol: v1.ProtocolTCP,
-// 				NodePort: int32(svcNodePort2),
-// 			}}
-// 		}),
-// 	)
-// 	populateEndpointSlices(proxier,
-// 		makeTestEndpointSlice(svcPortName1.Namespace, svcPortName1.Name, 1, func(eps *discovery.EndpointSlice) {
-// 			eps.AddressType = discovery.AddressTypeIPv4
-// 			eps.Endpoints = []discovery.Endpoint{{
-// 				Addresses: []string{epIpAddressRemote},
-// 			}}
-// 			eps.Ports = []discovery.EndpointPort{{
-// 				Name:     utilpointer.StringPtr(svcPortName1.Port),
-// 				Port:     utilpointer.Int32(int32(svcPort1)),
-// 				Protocol: &tcpProtocol,
-// 			}}
-// 		}),
-// 		makeTestEndpointSlice(svcPortName2.Namespace, svcPortName2.Name, 1, func(eps *discovery.EndpointSlice) {
-// 			eps.AddressType = discovery.AddressTypeIPv4
-// 			eps.Endpoints = []discovery.Endpoint{{
-// 				Addresses: []string{epIpAddressRemote},
-// 			}}
-// 			eps.Ports = []discovery.EndpointPort{{
-// 				Name:     utilpointer.StringPtr(svcPortName2.Port),
-// 				Port:     utilpointer.Int32(int32(svcPort2)),
-// 				Protocol: &tcpProtocol,
-// 			}}
-// 		}),
-// 	)
-// 	proxier.setInitialized(true)
-// 	proxier.syncProxyRules()
-// 	ep := proxier.endpointsMap[svcPortName1][0]
-// 	epInfo, ok := ep.(*endpointsInfo)
-// 	if !ok {
-// 		t.Errorf("Failed to cast endpointsInfo %q", svcPortName1.String())
+	makeServiceMap(proxier,
+		makeTestService(svcPortName1.Namespace, svcPortName1.Name, func(svc *v1.Service) {
+			svc.Spec.Type = "NodePort"
+			svc.Spec.ClusterIP = svcIP1
+			svc.Spec.Ports = []v1.ServicePort{{
+				Name:     svcPortName1.Port,
+				Port:     int32(svcPort1),
+				Protocol: v1.ProtocolTCP,
+				NodePort: int32(svcNodePort1),
+			}}
+		}),
+		makeTestService(svcPortName2.Namespace, svcPortName2.Name, func(svc *v1.Service) {
+			svc.Spec.Type = "NodePort"
+			svc.Spec.ClusterIP = svcIP2
+			svc.Spec.Ports = []v1.ServicePort{{
+				Name:     svcPortName2.Port,
+				Port:     int32(svcPort2),
+				Protocol: v1.ProtocolTCP,
+				NodePort: int32(svcNodePort2),
+			}}
+		}),
+	)
+	populateEndpointSlices(proxier,
+		makeTestEndpointSlice(svcPortName1.Namespace, svcPortName1.Name, 1, func(eps *discovery.EndpointSlice) {
+			eps.AddressType = discovery.AddressTypeIPv4
+			eps.Endpoints = []discovery.Endpoint{{
+				Addresses: []string{epIpAddressRemote},
+			}}
+			eps.Ports = []discovery.EndpointPort{{
+				Name:     utilpointer.StringPtr(svcPortName1.Port),
+				Port:     utilpointer.Int32(int32(svcPort1)),
+				Protocol: &tcpProtocol,
+			}}
+		}),
+		makeTestEndpointSlice(svcPortName2.Namespace, svcPortName2.Name, 1, func(eps *discovery.EndpointSlice) {
+			eps.AddressType = discovery.AddressTypeIPv4
+			eps.Endpoints = []discovery.Endpoint{{
+				Addresses: []string{epIpAddressRemote},
+			}}
+			eps.Ports = []discovery.EndpointPort{{
+				Name:     utilpointer.StringPtr(svcPortName2.Port),
+				Port:     utilpointer.Int32(int32(svcPort2)),
+				Protocol: &tcpProtocol,
+			}}
+		}),
+	)
+	proxier.setInitialized(true)
+	proxier.syncProxyRules()
+	ep := proxier.endpointsMap[svcPortName1][0]
+	epInfo, ok := ep.(*endpointsInfo)
+	if !ok {
+		t.Errorf("Failed to cast endpointsInfo %q", svcPortName1.String())
 
-// 	} else {
-// 		if epInfo.hnsID != guid {
-// 			t.Errorf("%v does not match %v", epInfo.hnsID, guid)
-// 		}
-// 	}
+	} else {
+		if epInfo.hnsID != guid {
+			t.Errorf("%v does not match %v", epInfo.hnsID, guid)
+		}
+	}
 
-// 	if *proxier.endPointsRefCount[guid] != 2 {
-// 		t.Errorf("RefCount not incremented. Current value: %v", *proxier.endPointsRefCount[guid])
-// 	}
+	if *proxier.endPointsRefCount[guid] != 2 {
+		t.Errorf("RefCount not incremented. Current value: %v", *proxier.endPointsRefCount[guid])
+	}
 
-// 	if *proxier.endPointsRefCount[guid] != *epInfo.refCount {
-// 		t.Errorf("Global refCount: %v does not match endpoint refCount: %v", *proxier.endPointsRefCount[guid], *epInfo.refCount)
-// 	}
+	if *proxier.endPointsRefCount[guid] != *epInfo.refCount {
+		t.Errorf("Global refCount: %v does not match endpoint refCount: %v", *proxier.endPointsRefCount[guid], *epInfo.refCount)
+	}
 
-// 	proxier.setInitialized(false)
-// 	deleteServices(proxier,
-// 		makeTestService(svcPortName2.Namespace, svcPortName2.Name, func(svc *v1.Service) {
-// 			svc.Spec.Type = "NodePort"
-// 			svc.Spec.ClusterIP = svcIP2
-// 			svc.Spec.Ports = []v1.ServicePort{{
-// 				Name:     svcPortName2.Port,
-// 				Port:     int32(svcPort2),
-// 				Protocol: v1.ProtocolTCP,
-// 				NodePort: int32(svcNodePort2),
-// 			}}
-// 		}),
-// 	)
+	proxier.setInitialized(false)
+	deleteServices(proxier,
+		makeTestService(svcPortName2.Namespace, svcPortName2.Name, func(svc *v1.Service) {
+			svc.Spec.Type = "NodePort"
+			svc.Spec.ClusterIP = svcIP2
+			svc.Spec.Ports = []v1.ServicePort{{
+				Name:     svcPortName2.Port,
+				Port:     int32(svcPort2),
+				Protocol: v1.ProtocolTCP,
+				NodePort: int32(svcNodePort2),
+			}}
+		}),
+	)
 
-// 	deleteEndpointSlices(proxier,
-// 		makeTestEndpointSlice(svcPortName2.Namespace, svcPortName2.Name, 1, func(eps *discovery.EndpointSlice) {
-// 			eps.AddressType = discovery.AddressTypeIPv4
-// 			eps.Endpoints = []discovery.Endpoint{{
-// 				Addresses: []string{epIpAddressRemote},
-// 			}}
-// 			eps.Ports = []discovery.EndpointPort{{
-// 				Name:     utilpointer.StringPtr(svcPortName2.Port),
-// 				Port:     utilpointer.Int32(int32(svcPort2)),
-// 				Protocol: &tcpProtocol,
-// 			}}
-// 		}),
-// 	)
+	deleteEndpointSlices(proxier,
+		makeTestEndpointSlice(svcPortName2.Namespace, svcPortName2.Name, 1, func(eps *discovery.EndpointSlice) {
+			eps.AddressType = discovery.AddressTypeIPv4
+			eps.Endpoints = []discovery.Endpoint{{
+				Addresses: []string{epIpAddressRemote},
+			}}
+			eps.Ports = []discovery.EndpointPort{{
+				Name:     utilpointer.StringPtr(svcPortName2.Port),
+				Port:     utilpointer.Int32(int32(svcPort2)),
+				Protocol: &tcpProtocol,
+			}}
+		}),
+	)
 
-// 	proxier.setInitialized(true)
-// 	proxier.syncProxyRules()
+	proxier.setInitialized(true)
+	proxier.syncProxyRules()
 
-// 	ep = proxier.endpointsMap[svcPortName1][0]
-// 	epInfo, ok = ep.(*endpointsInfo)
-// 	if !ok {
-// 		t.Errorf("Failed to cast endpointsInfo %q", svcPortName1.String())
+	ep = proxier.endpointsMap[svcPortName1][0]
+	epInfo, ok = ep.(*endpointsInfo)
+	if !ok {
+		t.Errorf("Failed to cast endpointsInfo %q", svcPortName1.String())
 
-// 	} else {
-// 		if epInfo.hnsID != guid {
-// 			t.Errorf("%v does not match %v", epInfo.hnsID, guid)
-// 		}
-// 	}
+	} else {
+		if epInfo.hnsID != guid {
+			t.Errorf("%v does not match %v", epInfo.hnsID, guid)
+		}
+	}
 
-// 	if *epInfo.refCount != 1 {
-// 		t.Errorf("Incorrect Refcount. Current value: %v", *epInfo.refCount)
-// 	}
+	if *epInfo.refCount != 1 {
+		t.Errorf("Incorrect Refcount. Current value: %v", *epInfo.refCount)
+	}
 
-// 	if *proxier.endPointsRefCount[guid] != *epInfo.refCount {
-// 		t.Errorf("Global refCount: %v does not match endpoint refCount: %v", *proxier.endPointsRefCount[guid], *epInfo.refCount)
-// 	}
-// }
+	if *proxier.endPointsRefCount[guid] != *epInfo.refCount {
+		t.Errorf("Global refCount: %v does not match endpoint refCount: %v", *proxier.endPointsRefCount[guid], *epInfo.refCount)
+	}
+}
+
 func TestSharedRemoteEndpointUpdate(t *testing.T) {
 	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
 	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_L2BRIDGE)
@@ -504,6 +550,28 @@ func TestSharedRemoteEndpointUpdate(t *testing.T) {
 		t.Errorf("Global refCount: %v does not match endpoint refCount: %v", *proxier.endPointsRefCount[guid], *epInfo.refCount)
 	}
 
+	expectedEndpoint := &hcn.HostComputeEndpoint{
+		Id:                 guid,
+		HostComputeNetwork: guid,
+		SchemaVersion: hcn.SchemaVersion{
+			Major: 2,
+			Minor: 0,
+		},
+		IpConfigurations: []hcn.IpConfig{{IpAddress: epIpAddressRemote, PrefixLength: 24}},
+		Flags:            hcn.EndpointFlagsRemoteEndpoint,
+	}
+
+	Endpoint, err := testHNS.hcninstance.GetEndpointByID(guid)
+
+	if err != nil {
+		t.Error(err)
+	}
+
+	diff := assertHCNDiff(*expectedEndpoint, *Endpoint)
+	if diff != "" {
+		t.Errorf("GetEndpointById(%s) returned a different Endpoint. Diff: %s ", expectedEndpoint.Id, diff)
+	}
+
 	proxier.setInitialized(false)
 
 	proxier.OnServiceUpdate(
@@ -583,6 +651,29 @@ func TestSharedRemoteEndpointUpdate(t *testing.T) {
 	if *proxier.endPointsRefCount[guid] != *epInfo.refCount {
 		t.Errorf("Global refCount: %v does not match endpoint refCount: %v", *proxier.endPointsRefCount[guid], *epInfo.refCount)
 	}
+
+	expectedEndpoint = &hcn.HostComputeEndpoint{
+		Id:                 guid,
+		HostComputeNetwork: guid,
+		SchemaVersion: hcn.SchemaVersion{
+			Major: 2,
+			Minor: 0,
+		},
+		IpConfigurations: []hcn.IpConfig{{IpAddress: epIpAddressRemote, PrefixLength: 24}},
+		Flags:            hcn.EndpointFlagsRemoteEndpoint,
+	}
+
+	Endpoint, err = testHNS.hcninstance.GetEndpointByID(guid)
+
+	if err != nil {
+		t.Error(err)
+	}
+
+	diff = assertHCNDiff(*expectedEndpoint, *Endpoint)
+	if diff != "" {
+		t.Errorf("GetEndpointById(%s) returned a different Endpoint. Diff: %s ", expectedEndpoint.Id, diff)
+	}
+
 }
 func TestCreateLoadBalancer(t *testing.T) {
 	tcpProtocol := v1.ProtocolTCP
@@ -641,10 +732,25 @@ func TestCreateLoadBalancer(t *testing.T) {
 		}
 	}
 
-	// diff := assertHCNDiff(*LoadBalancer1, *LoadBalancer2)
-	// if diff != "" {
-	// 	t.Errorf("getLoadBalancerByID(%s) returned a different LoadBalancer. Diff: %s ", LoadBalancer2.Id, diff)
-	// }
+	expectedLoadBalancer := &hcn.HostComputeLoadBalancer{
+		Id:                   guid,
+		HostComputeEndpoints: []string{guid},
+		SourceVIP:            sourceVip,
+		SchemaVersion: hcn.SchemaVersion{
+			Major: 2,
+			Minor: 0,
+		},
+	}
+
+	LoadBalancer, err := testHNS.hcninstance.GetLoadBalancerByID(guid)
+	if err != nil {
+		t.Error(err)
+	}
+
+	diff := assertHCNDiff(*LoadBalancer, *expectedLoadBalancer)
+	if diff != "" {
+		t.Errorf("GetLoadBalancerByID(%s) returned a different LoadBalancer. Diff: %s ", expectedLoadBalancer.Id, diff)
+	}
 }
 
 func TestCreateDsrLoadBalancer(t *testing.T) {
@@ -715,22 +821,26 @@ func TestCreateDsrLoadBalancer(t *testing.T) {
 		}
 	}
 
-	// LoadBalancer1, err := hcn.GetLoadBalancerByID(guid)
+	expectedLoadBalancer := &hcn.HostComputeLoadBalancer{
+		Id:                   guid,
+		HostComputeEndpoints: []string{guid},
+		SourceVIP:            sourceVip,
+		SchemaVersion: hcn.SchemaVersion{
+			Major: 2,
+			Minor: 0,
+		},
+		FrontendVIPs: []string{lbIP},
+	}
 
-	// if err != nil {
-	// 	t.Error(err)
-	// }
+	LoadBalancer, err := testHNS.hcninstance.GetLoadBalancerByID(guid)
+	if err != nil {
+		t.Error(err)
+	}
 
-	// LoadBalancer2, err := hcn.GetLoadBalancerByID(svcInfo.hnsID)
-
-	// if err != nil {
-	// 	t.Error(err)
-	// }
-
-	// diff := assertHCNDiff(*LoadBalancer1, *LoadBalancer2)
-	// if diff != "" {
-	// 	t.Errorf("getLoadBalancerByID(%s) returned a different LoadBalancer. Diff: %s ", LoadBalancer2.Id, diff)
-	// }
+	diff := assertHCNDiff(*LoadBalancer, *expectedLoadBalancer)
+	if diff != "" {
+		t.Errorf("GetLoadBalancerByID(%s) returned a different LoadBalancer. Diff: %s ", expectedLoadBalancer.Id, diff)
+	}
 }
 
 func TestEndpointSlice(t *testing.T) {
@@ -804,7 +914,30 @@ func TestEndpointSlice(t *testing.T) {
 			t.Errorf("Hns EndpointId %v does not match %v. ServicePortName %q", epInfo.hnsID, guid, svcPortName.String())
 		}
 	}
+
+	expectedEndpoint := &hcn.HostComputeEndpoint{
+		Id:                 guid,
+		HostComputeNetwork: guid,
+		SchemaVersion: hcn.SchemaVersion{
+			Major: 2,
+			Minor: 0,
+		},
+		IpConfigurations: []hcn.IpConfig{{IpAddress: epIpAddressRemote, PrefixLength: 24}},
+		Flags:            hcn.EndpointFlagsRemoteEndpoint,
+	}
+
+	endpoint, err := testHNS.hcninstance.GetEndpointByID(guid)
+	if err != nil {
+		t.Error(err)
+	}
+
+	diff := assertHCNDiff(*expectedEndpoint, *endpoint)
+	if diff != "" {
+		t.Errorf("GetEndpointById(%s) returned a different LoadBalancer. Diff: %s ", endpoint.Id, diff)
+	}
 }
+
+//final before iptables
 
 func TestLoadBalancer(t *testing.T) {
 	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
