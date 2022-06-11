@@ -41,6 +41,8 @@ const (
 	protocol          = 6
 	internalPort      = 80
 	externalPort      = 32440
+	policyConst       = "50"
+	isolationID       = 5000
 )
 
 func assertHCNDiff(x, y interface{}) string {
@@ -58,6 +60,10 @@ func assertHCNDiff(x, y interface{}) string {
 		nx := x.(hcn.HostComputeLoadBalancer)
 		ny := y.(hcn.HostComputeLoadBalancer)
 		nx.Id = ny.Id
+	case hcn.HostComputeNetwork:
+		nx := x.(hcn.HostComputeNetwork)
+		ny := y.(hcn.HostComputeNetwork)
+		nx.Id = ny.Id
 	}
 
 	diff := cmp.Diff(nx, ny)
@@ -65,10 +71,10 @@ func assertHCNDiff(x, y interface{}) string {
 }
 
 func TestGetNetworkByName(t *testing.T) {
-	hns := hcnutils{&ihcn{}}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 
-	network, err := hns.getNetworkByName(Network.Name)
+	network, err := hcnutils.getNetworkByName(Network.Name)
 	if err != nil {
 		t.Error(err)
 	}
@@ -76,13 +82,24 @@ func TestGetNetworkByName(t *testing.T) {
 	if !strings.EqualFold(network.id, Network.Id) {
 		t.Errorf("%v does not match %v", network.id, Network.Id)
 	}
+
+	HCNNetwork, err := hcn.GetNetworkByName(Network.Name)
+	if err != nil {
+		t.Error(err)
+	}
+
+	diff := assertHCNDiff(*HCNNetwork, *Network)
+	if diff != "" {
+		t.Errorf("GetNetworkByName(%s) returned a different Network. Diff: %s ", HCNNetwork.Name, diff)
+	}
+
 	err = Network.Delete()
 	if err != nil {
 		t.Error(err)
 	}
 }
 func TestGetEndpointByID(t *testing.T) {
-	hns := hcnutils{&ihcn{}}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 
 	ipConfig := &hcn.IpConfig{
@@ -102,12 +119,22 @@ func TestGetEndpointByID(t *testing.T) {
 		t.Error(err)
 	}
 
-	endpoint, err := hns.getEndpointByID(Endpoint.Id)
+	endpoint, err := hcnutils.getEndpointByID(Endpoint.Id)
 	if err != nil {
 		t.Error(err)
 	}
 	if !strings.EqualFold(endpoint.hnsID, Endpoint.Id) {
 		t.Errorf("%v does not match %v", endpoint.hnsID, Endpoint.Id)
+	}
+
+	HCNEndpoint, err := hcn.GetEndpointByID(Endpoint.Id)
+	if err != nil {
+		t.Error(err)
+	}
+
+	diff := assertHCNDiff(*HCNEndpoint, *Endpoint)
+	if diff != "" {
+		t.Errorf("getEndpointByID(%s) returned a different endpoint. Diff: %s ", HCNEndpoint.Name, diff)
 	}
 
 	err = Endpoint.Delete()
@@ -120,7 +147,7 @@ func TestGetEndpointByID(t *testing.T) {
 	}
 }
 func TestGetEndpointByIpAddressAndName(t *testing.T) {
-	hns := hcnutils{&ihcn{}}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 
 	ipConfig := &hcn.IpConfig{
@@ -140,7 +167,7 @@ func TestGetEndpointByIpAddressAndName(t *testing.T) {
 		t.Error(err)
 	}
 
-	endpoint, err := hns.getEndpointByIpAddress(Endpoint.IpConfigurations[0].IpAddress, Network.Name)
+	endpoint, err := hcnutils.getEndpointByIpAddress(Endpoint.IpConfigurations[0].IpAddress, Network.Name)
 	if err != nil {
 		t.Error(err)
 	}
@@ -151,12 +178,22 @@ func TestGetEndpointByIpAddressAndName(t *testing.T) {
 		t.Errorf("%v does not match %v", endpoint.ip, Endpoint.IpConfigurations[0].IpAddress)
 	}
 
-	endpoint, err = hns.getEndpointByName(Endpoint.Name)
+	endpoint, err = hcnutils.getEndpointByName(Endpoint.Name)
 	if err != nil {
 		t.Error(err)
 	}
 	if !strings.EqualFold(endpoint.name, Endpoint.Name) {
 		t.Errorf("%v does not match %v", endpoint.hnsID, Endpoint.Id)
+	}
+
+	HCNEndpoint, err := hcn.GetEndpointByName(Endpoint.Name)
+	if err != nil {
+		t.Error(err)
+	}
+
+	diff := assertHCNDiff(*HCNEndpoint, *Endpoint)
+	if diff != "" {
+		t.Errorf("getEndpointByName(%s) returned a different endpoint. Diff: %s ", HCNEndpoint.Name, diff)
 	}
 
 	err = Endpoint.Delete()
@@ -169,7 +206,7 @@ func TestGetEndpointByIpAddressAndName(t *testing.T) {
 	}
 }
 func TestCreateEndpointLocal(t *testing.T) {
-	hns := hcnutils{&ihcn{}}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 
 	expectedEndpoint := &hcn.HostComputeEndpoint{
@@ -178,7 +215,7 @@ func TestCreateEndpointLocal(t *testing.T) {
 		Policies: []hcn.EndpointPolicy{
 			{
 				Type:     "EncapOverhead",
-				Settings: json.RawMessage("{\"Overhead\":50}"),
+				Settings: json.RawMessage("{\"Overhead\":" + policyConst + "}"),
 			},
 		},
 		SchemaVersion: hcn.Version{
@@ -197,7 +234,7 @@ func TestCreateEndpointLocal(t *testing.T) {
 		isLocal:    true,
 	}
 
-	endpoint, err := hns.createEndpoint(endpoint, Network.Name)
+	endpoint, err := hcnutils.createEndpoint(endpoint, Network.Name)
 	if err != nil {
 		t.Error(err)
 	}
@@ -221,9 +258,34 @@ func TestCreateEndpointLocal(t *testing.T) {
 	}
 }
 func TestCreateEndpointRemote(t *testing.T) {
-	hns := hcnutils{&ihcn{}}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 	providerAddress := epPaAddress
+
+	expectedEndpoint := &hcn.HostComputeEndpoint{
+		IpConfigurations: []hcn.IpConfig{{IpAddress: epIpAddressRemote, PrefixLength: 24}},
+		MacAddress:       epMacAddress,
+		Policies: []hcn.EndpointPolicy{
+			{
+				Type:     "ProviderAddress",
+				Settings: json.RawMessage("{\"ProviderAddress\":" + policyConst + "}"),
+			},
+			{
+				Type:     "EncapOverhead",
+				Settings: json.RawMessage("{\"Overhead\":" + policyConst + "}"),
+			},
+		},
+		SchemaVersion: hcn.Version{
+			Major: 2,
+			Minor: 0,
+		},
+		Health: hcn.Health{
+			Extra: hcn.ExtraParams{
+				SharedContainers: json.RawMessage("[]"),
+			},
+		},
+		Flags: hcn.EndpointFlagsRemoteEndpoint,
+	}
 
 	endpoint := &endpointsInfo{
 		ip:              epIpAddressRemote,
@@ -232,7 +294,7 @@ func TestCreateEndpointRemote(t *testing.T) {
 		providerAddress: providerAddress,
 	}
 
-	endpoint, err := hns.createEndpoint(endpoint, Network.Name)
+	endpoint, err := hcnutils.createEndpoint(endpoint, Network.Name)
 	if err != nil {
 		t.Error(err)
 	}
@@ -240,15 +302,12 @@ func TestCreateEndpointRemote(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	if !strings.EqualFold(endpoint.hnsID, Endpoint.Id) {
-		t.Errorf("%v does not match %v", endpoint.hnsID, Endpoint.Id)
+
+	diff := assertHCNDiff(*expectedEndpoint, *Endpoint)
+	if diff != "" {
+		t.Errorf("getEndpointByID(%s) returned a different endpoint. Diff: %s ", Endpoint.Name, diff)
 	}
-	if endpoint.ip != Endpoint.IpConfigurations[0].IpAddress {
-		t.Errorf("%v does not match %v", endpoint.ip, Endpoint.IpConfigurations[0].IpAddress)
-	}
-	if endpoint.macAddress != Endpoint.MacAddress {
-		t.Errorf("%v does not match %v", endpoint.macAddress, Endpoint.MacAddress)
-	}
+
 	if len(providerAddress) != 0 && endpoint.providerAddress != epPaAddress {
 		t.Errorf("%v does not match %v", endpoint.providerAddress, providerAddress)
 	}
@@ -263,7 +322,7 @@ func TestCreateEndpointRemote(t *testing.T) {
 	}
 }
 func TestDeleteEndpoint(t *testing.T) {
-	hns := hcnutils{&ihcn{}}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 
 	ipConfig := &hcn.IpConfig{
@@ -281,7 +340,7 @@ func TestDeleteEndpoint(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	err = hns.deleteEndpoint(Endpoint.Id)
+	err = hcnutils.deleteEndpoint(Endpoint.Id)
 	if err != nil {
 		t.Error(err)
 	}
@@ -298,7 +357,7 @@ func TestDeleteEndpoint(t *testing.T) {
 }
 
 func TestGetLoadBalancerExisting(t *testing.T) {
-	hns := hcnutils{&ihcn{}}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 	lbs := make(map[loadBalancerIdentifier]*(loadBalancerInfo))
 
@@ -341,13 +400,20 @@ func TestGetLoadBalancerExisting(t *testing.T) {
 		hnsID: Endpoint.Id,
 	}
 	endpoints := []endpointsInfo{*endpoint}
-	lb, err := hns.getLoadBalancer(endpoints, loadBalancerFlags{}, sourceVip, serviceVip, protocol, internalPort, externalPort, lbs)
+	lb, err := hcnutils.getLoadBalancer(endpoints, loadBalancerFlags{}, sourceVip, serviceVip, protocol, internalPort, externalPort, lbs)
 	if err != nil {
 		t.Error(err)
 	}
 
 	if !strings.EqualFold(lb.hnsID, LoadBalancer.Id) {
 		t.Errorf("%v does not match %v", lb.hnsID, LoadBalancer.Id)
+	}
+
+	loadbalancer, err := hcn.GetLoadBalancerByID(lb.hnsID)
+
+	diff := assertHCNDiff(*LoadBalancer, *loadbalancer)
+	if diff != "" {
+		t.Errorf("getLoadBalancerByID(%s) returned a different LoadBalancer. Diff: %s ", loadbalancer.Id, diff)
 	}
 
 	err = LoadBalancer.Delete()
@@ -364,7 +430,7 @@ func TestGetLoadBalancerExisting(t *testing.T) {
 	}
 }
 func TestGetLoadBalancerNew(t *testing.T) {
-	hns := hcnutils{&ihcn{}}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 	// We keep this empty to ensure we test for new load balancer creation.
 	lbs := make(map[loadBalancerIdentifier]*(loadBalancerInfo))
@@ -389,7 +455,7 @@ func TestGetLoadBalancerNew(t *testing.T) {
 		hnsID: Endpoint.Id,
 	}
 	endpoints := []endpointsInfo{*endpoint}
-	lb, err := hns.getLoadBalancer(endpoints, loadBalancerFlags{}, sourceVip, serviceVip, protocol, internalPort, externalPort, lbs)
+	lb, err := hcnutils.getLoadBalancer(endpoints, loadBalancerFlags{}, sourceVip, serviceVip, protocol, internalPort, externalPort, lbs)
 	if err != nil {
 		t.Error(err)
 	}
@@ -400,6 +466,32 @@ func TestGetLoadBalancerNew(t *testing.T) {
 	if !strings.EqualFold(lb.hnsID, LoadBalancer.Id) {
 		t.Errorf("%v does not match %v", lb.hnsID, LoadBalancer.Id)
 	}
+
+	expectedLoadBalancer := &hcn.HostComputeLoadBalancer{
+		HostComputeEndpoints: []string{endpoint.hnsID},
+		SourceVIP:            sourceVip,
+		Flags:                hcn.LoadBalancerFlagsNone,
+		FrontendVIPs:         []string{serviceVip},
+		PortMappings: []hcn.LoadBalancerPortMapping{
+			{
+				Protocol:         uint32(protocol),
+				InternalPort:     internalPort,
+				ExternalPort:     externalPort,
+				DistributionType: hcn.LoadBalancerDistributionNone,
+				Flags:            hcn.LoadBalancerPortMappingFlagsNone,
+			},
+		},
+		SchemaVersion: hcn.Version{
+			Major: 2,
+			Minor: 0,
+		},
+	}
+
+	diff := assertHCNDiff(*LoadBalancer, *expectedLoadBalancer)
+	if diff != "" {
+		t.Errorf("getLoadBalancerByID(%s) returned a different LoadBalancer. Diff: %s ", LoadBalancer.Id, diff)
+	}
+
 	err = LoadBalancer.Delete()
 	if err != nil {
 		t.Error(err)
@@ -415,7 +507,7 @@ func TestGetLoadBalancerNew(t *testing.T) {
 	}
 }
 func TestDeleteLoadBalancer(t *testing.T) {
-	hns := hcnutils{&ihcn{}}
+	hcnutils := NewHCNUtils(&ihcn{})
 	Network := mustTestNetwork(t)
 
 	ipConfig := &hcn.IpConfig{
@@ -448,11 +540,11 @@ func TestDeleteLoadBalancer(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	err = hns.deleteLoadBalancer(LoadBalancer.Id)
+	err = hcnutils.deleteLoadBalancer(LoadBalancer.Id)
 	if err != nil {
 		t.Error(err)
 	}
-	// Load balancer should not longer exist
+	// Load balancer should not longer exist here so err should not be null
 	LoadBalancer, err = hcn.GetLoadBalancerByID(LoadBalancer.Id)
 	if err == nil {
 		t.Error(err)
@@ -512,7 +604,7 @@ func createTestNetwork() (*hcn.HostComputeNetwork, error) {
 	}
 
 	vsid := &hcn.VsidPolicySetting{
-		IsolationId: 5000,
+		IsolationId: isolationID,
 	}
 	vsidJson, err := json.Marshal(vsid)
 	if err != nil {
