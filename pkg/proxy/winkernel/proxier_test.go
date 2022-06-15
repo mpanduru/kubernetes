@@ -71,7 +71,7 @@ func NewFakeProxier(hcnutilsfake *hcnutils, networkType string) *Proxier {
 		network:             *hnsNetworkInfo,
 		sourceVip:           sourceVip,
 		hostMac:             macAddress,
-		isDSR:               false,
+		isDSR:               true,
 		hns:                 hcnutilsfake,
 		endPointsRefCount:   make(endPointsReferenceCountMap),
 	}
@@ -1001,6 +1001,27 @@ func TestLoadBalancer(t *testing.T) {
 			t.Errorf("%v does not match %v", svcInfo.hnsID, guid)
 		}
 	}
+
+	expectedLoadBalancer := &hcn.HostComputeLoadBalancer{
+		Id:                   guid,
+		HostComputeEndpoints: []string{guid},
+		SourceVIP:            sourceVip,
+		SchemaVersion: hcn.SchemaVersion{
+			Major: 2,
+			Minor: 0,
+		},
+		FrontendVIPs: []string{svcLBIP},
+	}
+
+	LoadBalancer, err := testHNS.hcninstance.GetLoadBalancerByID(guid)
+	if err != nil {
+		t.Error(err)
+	}
+
+	diff := assertHCNDiff(*LoadBalancer, *expectedLoadBalancer)
+	if diff != "" {
+		t.Errorf("GetLoadBalancerByID(%s) returned a different LoadBalancer. Diff: %s ", expectedLoadBalancer.Id, diff)
+	}
 }
 
 func TestOnlyLocalLoadBalancing(t *testing.T) {
@@ -1075,6 +1096,27 @@ func TestOnlyLocalLoadBalancing(t *testing.T) {
 			t.Errorf("%v does not match %v", svcInfo.hnsID, guid)
 		}
 	}
+
+	expectedLoadBalancer := &hcn.HostComputeLoadBalancer{
+		Id:                   guid,
+		HostComputeEndpoints: []string{guid},
+		SourceVIP:            sourceVip,
+		SchemaVersion: hcn.SchemaVersion{
+			Major: 2,
+			Minor: 0,
+		},
+		FrontendVIPs: []string{svcLBIP},
+	}
+
+	LoadBalancer, err := testHNS.hcninstance.GetLoadBalancerByID(guid)
+	if err != nil {
+		t.Error(err)
+	}
+
+	diff := assertHCNDiff(*LoadBalancer, *expectedLoadBalancer)
+	if diff != "" {
+		t.Errorf("GetLoadBalancerByID(%s) returned a different LoadBalancer. Diff: %s ", expectedLoadBalancer.Id, diff)
+	}
 }
 
 func TestNodePort(t *testing.T) {
@@ -1133,6 +1175,44 @@ func TestNodePort(t *testing.T) {
 		if svcInfo.hnsID != guid {
 			t.Errorf("%v does not match %v", svcInfo.hnsID, guid)
 		}
+
+		if svcInfo.nodePorthnsID != guid {
+			t.Errorf("%v does not match %v", svcInfo.nodePorthnsID, guid)
+		}
+	}
+}
+
+func TestNodePortReject(t *testing.T) {
+	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
+	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
+	svcIP := "172.30.0.41"
+	svcPort := 80
+	svcNodePort := 3001
+	svcPortName := proxy.ServicePortName{
+		NamespacedName: makeNSN("ns1", "svc1"),
+		Port:           "p80",
+	}
+
+	makeServiceMap(proxier,
+		makeTestService(svcPortName.Namespace, svcPortName.Name, func(svc *v1.Service) {
+			svc.Spec.Type = "NodePort"
+			svc.Spec.ClusterIP = svcIP
+			svc.Spec.Ports = []v1.ServicePort{{
+				Name:     svcPortName.Port,
+				Port:     int32(svcPort),
+				Protocol: v1.ProtocolTCP,
+				NodePort: int32(svcNodePort),
+			}}
+		}),
+	)
+
+	proxier.setInitialized(true)
+	proxier.syncProxyRules()
+
+	svc := proxier.serviceMap[svcPortName]
+	_, ok := svc.(*serviceInfo)
+	if ok {
+		t.Errorf("Service info is not empty. Unexpected behaviour")
 	}
 }
 
