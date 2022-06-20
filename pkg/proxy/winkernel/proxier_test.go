@@ -41,12 +41,18 @@ import (
 )
 
 const (
-	testHostName      = "test-hostname"
-	macAddress        = "00-11-22-33-44-55"
-	clusterCIDR       = "192.168.1.0/24"
-	destinationPrefix = "192.168.2.0/24"
-	providerAddress   = "10.0.0.3"
-	guid              = "123ABC"
+	testHostName           = "test-hostname"
+	macAddress             = "00-11-22-33-44-55"
+	clusterCIDR            = "192.168.1.0/24"
+	destinationPrefix      = "192.168.2.0/24"
+	providerAddress        = "10.0.0.3"
+	guid                   = "123ABC"
+	svcIP                  = "10.20.30.41"
+	svcPort                = 80
+	svcNodePort            = 3001
+	svcExternalIPs         = "50.60.70.81"
+	svcLBIP                = "11.21.31.41"
+	svcHealthCheckNodePort = 30000
 )
 
 //
@@ -94,10 +100,6 @@ func TestCreateServiceVip(t *testing.T) {
 		t.Error()
 	}
 
-	svcIP := "10.20.30.41"
-	svcPort := 80
-	svcNodePort := 3001
-	svcExternalIPs := "50.60.70.81"
 	svcPortName := proxy.ServicePortName{
 		NamespacedName: makeNSN("ns1", "svc1"),
 		Port:           "p80",
@@ -149,9 +151,6 @@ func TestCreateRemoteEndpointOverlay(t *testing.T) {
 		t.Error()
 	}
 
-	svcIP := "10.20.30.41"
-	svcPort := 80
-	svcNodePort := 3001
 	svcPortName := proxy.ServicePortName{
 		NamespacedName: makeNSN("ns1", "svc1"),
 		Port:           "p80",
@@ -237,9 +236,7 @@ func TestCreateRemoteEndpointL2Bridge(t *testing.T) {
 	}
 
 	tcpProtocol := v1.ProtocolTCP
-	svcIP := "10.20.30.41"
-	svcPort := 80
-	svcNodePort := 3001
+
 	svcPortName := proxy.ServicePortName{
 		NamespacedName: makeNSN("ns1", "svc1"),
 		Port:           "p80",
@@ -686,9 +683,6 @@ func TestCreateLoadBalancer(t *testing.T) {
 		t.Error()
 	}
 
-	svcIP := "10.20.30.41"
-	svcPort := 80
-	svcNodePort := 3001
 	svcPortName := proxy.ServicePortName{
 		NamespacedName: makeNSN("ns1", "svc1"),
 		Port:           "p80",
@@ -763,15 +757,11 @@ func TestCreateDsrLoadBalancer(t *testing.T) {
 		t.Error()
 	}
 
-	svcIP := "10.20.30.41"
-	svcPort := 80
-	svcNodePort := 3001
 	svcPortName := proxy.ServicePortName{
 		NamespacedName: makeNSN("ns1", "svc1"),
 		Port:           "p80",
 		Protocol:       v1.ProtocolTCP,
 	}
-	lbIP := "11.21.31.41"
 
 	makeServiceMap(proxier,
 		makeTestService(svcPortName.Namespace, svcPortName.Name, func(svc *v1.Service) {
@@ -785,7 +775,7 @@ func TestCreateDsrLoadBalancer(t *testing.T) {
 				NodePort: int32(svcNodePort),
 			}}
 			svc.Status.LoadBalancer.Ingress = []v1.LoadBalancerIngress{{
-				IP: lbIP,
+				IP: svcLBIP,
 			}}
 		}),
 	)
@@ -832,7 +822,7 @@ func TestCreateDsrLoadBalancer(t *testing.T) {
 			Major: 2,
 			Minor: 0,
 		},
-		FrontendVIPs: []string{lbIP},
+		FrontendVIPs: []string{svcLBIP},
 	}
 
 	LoadBalancer, err := testHNS.hcninstance.GetLoadBalancerByID(guid)
@@ -865,7 +855,7 @@ func TestEndpointSlice(t *testing.T) {
 	proxier.OnServiceAdd(&v1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: svcPortName.Name, Namespace: svcPortName.Namespace},
 		Spec: v1.ServiceSpec{
-			ClusterIP: "172.20.1.1",
+			ClusterIP: svcIP,
 			Selector:  map[string]string{"foo": "bar"},
 			Ports:     []v1.ServicePort{{Name: svcPortName.Port, TargetPort: intstr.FromInt(80), Protocol: v1.ProtocolTCP}},
 		},
@@ -886,9 +876,9 @@ func TestEndpointSlice(t *testing.T) {
 		}},
 		AddressType: discovery.AddressTypeIPv4,
 		Endpoints: []discovery.Endpoint{{
-			Addresses:  []string{"192.168.2.3"},
+			Addresses:  []string{epIpAddressRemote},
 			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
-			NodeName:   utilpointer.StringPtr("testhost2"),
+			NodeName:   utilpointer.StringPtr(testHostName),
 		}},
 	}
 
@@ -949,10 +939,6 @@ func TestLoadBalancer(t *testing.T) {
 		t.Error()
 	}
 
-	svcIP := "10.20.30.41"
-	svcPort := 80
-	svcNodePort := 3001
-	svcLBIP := "11.21.31.41"
 	svcPortName := proxy.ServicePortName{
 		NamespacedName: makeNSN("ns1", "svc1"),
 		Port:           "p80",
@@ -1034,11 +1020,6 @@ func TestOnlyLocalLoadBalancing(t *testing.T) {
 		t.Error()
 	}
 
-	svcIP := "10.20.30.41"
-	svcPort := 80
-	svcNodePort := 3001
-	svcHealthCheckNodePort := 30000
-	svcLBIP := "11.21.31.41"
 	svcPortName := proxy.ServicePortName{
 		NamespacedName: makeNSN("ns1", "svc1"),
 		Port:           "p80",
@@ -1076,7 +1057,7 @@ func TestOnlyLocalLoadBalancing(t *testing.T) {
 				Addresses: []string{epIpAddressRemote},
 			}, {
 				Addresses: []string{epIpAddress},
-				NodeName:  utilpointer.StringPtr("testhost"),
+				NodeName:  utilpointer.StringPtr(testHostName),
 			}}
 			eps.Ports = []discovery.EndpointPort{{
 				Name:     utilpointer.StringPtr(svcPortName.Port),
@@ -1129,9 +1110,6 @@ func TestNodePort(t *testing.T) {
 		t.Error()
 	}
 
-	svcIP := "10.20.30.41"
-	svcPort := 80
-	svcNodePort := 3001
 	svcPortName := proxy.ServicePortName{
 		NamespacedName: makeNSN("ns1", "svc1"),
 		Port:           "p80",
@@ -1188,9 +1166,7 @@ func TestNodePort(t *testing.T) {
 func TestNodePortReject(t *testing.T) {
 	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
 	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
-	svcIP := "10.20.30.41"
-	svcPort := 80
-	svcNodePort := 3001
+
 	svcPortName := proxy.ServicePortName{
 		NamespacedName: makeNSN("ns1", "svc1"),
 		Port:           "p80",
@@ -1223,8 +1199,7 @@ func TestNodePortReject(t *testing.T) {
 func TestClusterIpReject(t *testing.T) {
 	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
 	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
-	svcIP := "10.20.30.41"
-	svcPort := 80
+
 	svcPortName := proxy.ServicePortName{
 		NamespacedName: makeNSN("ns1", "svc1"),
 		Port:           "p80",
@@ -1255,11 +1230,7 @@ func TestClusterIpReject(t *testing.T) {
 func TestLoadBalancerReject(t *testing.T) {
 	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
 	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
-	svcIP := "10.20.30.41"
-	svcPort := 80
-	svcNodePort := 3001
-	svcHealthCheckNodePort := 30000
-	svcLBIP := "11.21.31.41"
+
 	svcPortName := proxy.ServicePortName{
 		NamespacedName: makeNSN("ns1", "svc1"),
 		Port:           "p80",
@@ -1312,9 +1283,7 @@ func TestLoadBalancerReject(t *testing.T) {
 func TestExternalIPsReject(t *testing.T) {
 	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
 	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
-	svcIP := "10.20.30.41"
-	svcPort := 80
-	svcExternalIPs := "50.60.70.81"
+
 	svcPortName := proxy.ServicePortName{
 		NamespacedName: makeNSN("ns1", "svc1"),
 		Port:           "p80",
@@ -1347,8 +1316,7 @@ func TestExternalIPsReject(t *testing.T) {
 func TestClusterIPEndpointsJump(t *testing.T) {
 	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
 	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
-	svcIP := "10.20.30.41"
-	svcPort := 80
+
 	svcPortName := proxy.ServicePortName{
 		NamespacedName: makeNSN("ns1", "svc1"),
 		Port:           "p80",
@@ -1403,9 +1371,6 @@ func TestOnlyLocalExternalIPs(t *testing.T) {
 	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
 	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
 
-	svcIP := "10.20.30.41"
-	svcPort := 80
-	svcExternalIPs := "50.60.70.81"
 	svcPortName := proxy.ServicePortName{
 		NamespacedName: makeNSN("ns1", "svc1"),
 		Port:           "p80",
@@ -1469,9 +1434,6 @@ func TestNonLocalExternalIPs(t *testing.T) {
 	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
 	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
 
-	svcIP := "10.20.30.41"
-	svcPort := 80
-	svcExternalIPs := "50.60.70.81"
 	svcPortName := proxy.ServicePortName{
 		NamespacedName: makeNSN("ns1", "svc1"),
 		Port:           "p80",
@@ -1534,10 +1496,6 @@ func TestHealthCheckNodePort(t *testing.T) {
 	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
 	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
 
-	svcIP := "10.20.30.41"
-	svcPort := 80
-	svcNodePort := 3001
-	svcHealthCheckNodePort := 30000
 	svcPortName := proxy.ServicePortName{
 		NamespacedName: makeNSN("ns1", "svc1"),
 		Port:           "p80",
@@ -1838,7 +1796,7 @@ func TestEndpointSliceE2E(t *testing.T) {
 	proxier.OnServiceAdd(&v1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: svcPortName.Name, Namespace: svcPortName.Namespace},
 		Spec: v1.ServiceSpec{
-			ClusterIP: "172.20.1.1",
+			ClusterIP: svcIP,
 			Selector:  map[string]string{"foo": "bar"},
 			Ports:     []v1.ServicePort{{Name: svcPortName.Port, TargetPort: intstr.FromInt(80), Protocol: v1.ProtocolTCP}},
 		},
@@ -1858,7 +1816,7 @@ func TestEndpointSliceE2E(t *testing.T) {
 		}},
 		AddressType: discovery.AddressTypeIPv4,
 		Endpoints: []discovery.Endpoint{{
-			Addresses:  []string{"192.168.2.3"},
+			Addresses:  []string{epIpAddressRemote},
 			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
 			NodeName:   utilpointer.StringPtr(testHostName),
 		}, {
@@ -1940,9 +1898,9 @@ func TestInternalTrafficPolicyE2E(t *testing.T) {
 			internalTrafficPolicy: &cluster,
 			featureGateOn:         true,
 			endpoints: []endpoint{
-				{"10.0.1.1", testHostName},
-				{"10.0.1.2", "host1"},
-				{"10.0.1.3", "host2"},
+				{epPaAddress, testHostName},
+				{"10.0.0.4", "host1"},
+				{"10.0.0.5", "host2"},
 			},
 			expectEndpointRule: true,
 		},
@@ -1951,9 +1909,9 @@ func TestInternalTrafficPolicyE2E(t *testing.T) {
 			internalTrafficPolicy: &local,
 			featureGateOn:         true,
 			endpoints: []endpoint{
-				{"10.0.1.1", testHostName},
-				{"10.0.1.2", "host1"},
-				{"10.0.1.3", "host2"},
+				{epPaAddress, testHostName},
+				{"10.0.0.4", "host1"},
+				{"10.0.0.5", "host2"},
 			},
 			expectEndpointRule: true,
 		},
@@ -1962,9 +1920,9 @@ func TestInternalTrafficPolicyE2E(t *testing.T) {
 			internalTrafficPolicy: &local,
 			featureGateOn:         true,
 			endpoints: []endpoint{
-				{"10.0.1.1", "host0"},
-				{"10.0.1.2", "host1"},
-				{"10.0.1.3", "host2"},
+				{epPaAddress, testHostName},
+				{"10.0.0.4", "host1"},
+				{"10.0.0.5", "host2"},
 			},
 			expectEndpointRule: false,
 		},
@@ -1973,9 +1931,9 @@ func TestInternalTrafficPolicyE2E(t *testing.T) {
 			internalTrafficPolicy: &local,
 			featureGateOn:         false,
 			endpoints: []endpoint{
-				{"10.0.1.1", testHostName},
-				{"10.0.1.2", "host1"},
-				{"10.0.1.3", "host2"},
+				{epPaAddress, testHostName},
+				{"10.0.0.4", "host1"},
+				{"10.0.0.5", "host2"},
 			},
 			expectEndpointRule: false,
 		},
@@ -2003,7 +1961,7 @@ func TestInternalTrafficPolicyE2E(t *testing.T) {
 			svc := &v1.Service{
 				ObjectMeta: metav1.ObjectMeta{Name: svcPortName.Name, Namespace: svcPortName.Namespace},
 				Spec: v1.ServiceSpec{
-					ClusterIP: "172.20.1.1",
+					ClusterIP: svcIP,
 					Selector:  map[string]string{"foo": "bar"},
 					Ports:     []v1.ServicePort{{Name: svcPortName.Port, Port: 80, Protocol: v1.ProtocolTCP}},
 				},
@@ -2102,11 +2060,11 @@ func TestHealthCheckNodePortE2E(t *testing.T) {
 	svc := &v1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: svcPortName.Name, Namespace: svcPortName.Namespace},
 		Spec: v1.ServiceSpec{
-			ClusterIP:             "172.20.1.1",
+			ClusterIP:             svcIP,
 			Selector:              map[string]string{"foo": "bar"},
 			Ports:                 []v1.ServicePort{{Name: svcPortName.Port, TargetPort: intstr.FromInt(80), NodePort: 30010, Protocol: v1.ProtocolTCP}},
 			Type:                  "LoadBalancer",
-			HealthCheckNodePort:   30000,
+			HealthCheckNodePort:   svcHealthCheckNodePort,
 			ExternalTrafficPolicy: v1.ServiceExternalTrafficPolicyTypeLocal,
 		},
 	}
@@ -2127,19 +2085,19 @@ func TestHealthCheckNodePortE2E(t *testing.T) {
 		}},
 		AddressType: discovery.AddressTypeIPv4,
 		Endpoints: []discovery.Endpoint{{
-			Addresses:  []string{"10.0.1.1"},
+			Addresses:  []string{epPaAddress},
 			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
 			NodeName:   utilpointer.StringPtr(testHostName),
 		}, {
-			Addresses:  []string{"10.0.1.2"},
+			Addresses:  []string{"10.0.0.4"},
 			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
 			NodeName:   utilpointer.StringPtr("node2"),
 		}, {
-			Addresses:  []string{"10.0.1.3"},
+			Addresses:  []string{"10.0.0.5"},
 			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
 			NodeName:   utilpointer.StringPtr("node3"),
 		}, {
-			Addresses:  []string{"10.0.1.4"},
+			Addresses:  []string{"10.0.0.6"},
 			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(false)},
 			NodeName:   utilpointer.StringPtr("node4"),
 		}},
@@ -2158,7 +2116,7 @@ func TestHealthCheckNodePortE2E(t *testing.T) {
 		if svcInfo.hnsID != guid {
 			t.Errorf("The Hns Loadbalancer Id %v does not match %v. ServicePortName %q", svcInfo.hnsID, guid, svcPortName.String())
 		}
-		if svcInfo.BaseServiceInfo.HealthCheckNodePort() != 30000 {
+		if svcInfo.BaseServiceInfo.HealthCheckNodePort() != svcHealthCheckNodePort {
 			t.Errorf("Node port health check is null")
 		}
 	}
@@ -2205,11 +2163,11 @@ func TestHealthCheckNodePortWhenTerminating(t *testing.T) {
 	proxier.OnServiceAdd(&v1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: svcPortName.Name, Namespace: svcPortName.Namespace},
 		Spec: v1.ServiceSpec{
-			ClusterIP:             "172.20.1.1",
+			ClusterIP:             svcIP,
 			Selector:              map[string]string{"foo": "bar"},
 			Ports:                 []v1.ServicePort{{Name: svcPortName.Port, TargetPort: intstr.FromInt(80), NodePort: 30010, Protocol: v1.ProtocolTCP}},
 			Type:                  "LoadBalancer",
-			HealthCheckNodePort:   30000,
+			HealthCheckNodePort:   svcHealthCheckNodePort,
 			ExternalTrafficPolicy: v1.ServiceExternalTrafficPolicyTypeLocal,
 		},
 	})
@@ -2228,19 +2186,19 @@ func TestHealthCheckNodePortWhenTerminating(t *testing.T) {
 		}},
 		AddressType: discovery.AddressTypeIPv4,
 		Endpoints: []discovery.Endpoint{{
-			Addresses:  []string{"10.0.1.1"},
+			Addresses:  []string{epPaAddress},
 			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
 			NodeName:   utilpointer.StringPtr(testHostName),
 		}, {
-			Addresses:  []string{"10.0.1.2"},
+			Addresses:  []string{"10.0.0.4"},
 			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
 			NodeName:   utilpointer.StringPtr(testHostName),
 		}, {
-			Addresses:  []string{"10.0.1.3"},
+			Addresses:  []string{"10.0.0.5"},
 			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
 			NodeName:   utilpointer.StringPtr(testHostName),
 		}, { // not ready endpoints should be ignored
-			Addresses:  []string{"10.0.1.4"},
+			Addresses:  []string{"10.0.0.6"},
 			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(false)},
 			NodeName:   utilpointer.StringPtr(testHostName),
 		}},
@@ -2260,7 +2218,7 @@ func TestHealthCheckNodePortWhenTerminating(t *testing.T) {
 			t.Errorf("The Hns Loadbalancer Id %v does not match %v. ServicePortName %q", svcInfo.hnsID, guid, svcPortName.String())
 		}
 
-		if svcInfo.BaseServiceInfo.HealthCheckNodePort() != 30000 {
+		if svcInfo.BaseServiceInfo.HealthCheckNodePort() != svcHealthCheckNodePort {
 			t.Errorf("Node port health check is null")
 		}
 	}
@@ -2290,7 +2248,7 @@ func TestHealthCheckNodePortWhenTerminating(t *testing.T) {
 		}},
 		AddressType: discovery.AddressTypeIPv4,
 		Endpoints: []discovery.Endpoint{{
-			Addresses: []string{"10.0.1.1"},
+			Addresses: []string{epPaAddress},
 			Conditions: discovery.EndpointConditions{
 				Ready:       utilpointer.BoolPtr(false),
 				Serving:     utilpointer.BoolPtr(true),
@@ -2298,7 +2256,7 @@ func TestHealthCheckNodePortWhenTerminating(t *testing.T) {
 			},
 			NodeName: utilpointer.StringPtr(testHostName),
 		}, {
-			Addresses: []string{"10.0.1.2"},
+			Addresses: []string{"10.0.0.4"},
 			Conditions: discovery.EndpointConditions{
 				Ready:       utilpointer.BoolPtr(false),
 				Serving:     utilpointer.BoolPtr(true),
@@ -2306,7 +2264,7 @@ func TestHealthCheckNodePortWhenTerminating(t *testing.T) {
 			},
 			NodeName: utilpointer.StringPtr(testHostName),
 		}, {
-			Addresses: []string{"10.0.1.3"},
+			Addresses: []string{"10.0.0.5"},
 			Conditions: discovery.EndpointConditions{
 				Ready:       utilpointer.BoolPtr(false),
 				Serving:     utilpointer.BoolPtr(true),
@@ -2314,7 +2272,7 @@ func TestHealthCheckNodePortWhenTerminating(t *testing.T) {
 			},
 			NodeName: utilpointer.StringPtr(testHostName),
 		}, { // not ready endpoints should be ignored
-			Addresses: []string{"10.0.1.4"},
+			Addresses: []string{"10.0.0.6"},
 			Conditions: discovery.EndpointConditions{
 				Ready:       utilpointer.BoolPtr(false),
 				Serving:     utilpointer.BoolPtr(false),
@@ -2436,12 +2394,12 @@ func makeTestEndpointSlice(namespace, name string, sliceNum int, epsFunc func(*d
 }
 
 func addTestPort(array []v1.ServicePort, name string, protocol v1.Protocol, port, nodeport int32, targetPort int) []v1.ServicePort {
-	svcPort := v1.ServicePort{
+	svcport := v1.ServicePort{
 		Name:       name,
 		Protocol:   protocol,
 		Port:       port,
 		NodePort:   nodeport,
 		TargetPort: intstr.FromInt(targetPort),
 	}
-	return append(array, svcPort)
+	return append(array, svcport)
 }
