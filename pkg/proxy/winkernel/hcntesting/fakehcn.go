@@ -2,6 +2,7 @@ package hcntesting
 
 import (
 	"encoding/json"
+	"errors"
 
 	"github.com/Microsoft/hcsshim/hcn"
 	"k8s.io/klog/v2"
@@ -98,7 +99,12 @@ func (HCN *FakeHCN) GetEndpointByID(endpointId string) (*hcn.HostComputeEndpoint
 			endpoint.Flags = ep.Flags
 			endpoint.Health = ep.Health
 			endpoint.SchemaVersion = ep.SchemaVersion
+			break
 		}
+	}
+	if endpoint.Id == "" {
+		err := errors.New("No endpoint matches this ID")
+		return nil, err
 	}
 	return endpoint, nil
 }
@@ -128,7 +134,12 @@ func (HCN *FakeHCN) GetEndpointByName(endpointName string) (*hcn.HostComputeEndp
 			endpoint.MacAddress = ep.MacAddress
 			endpoint.Flags = ep.Flags
 			endpoint.SchemaVersion = ep.SchemaVersion
+			break
 		}
+	}
+	if endpoint.Name == "" {
+		err := errors.New("No endpoint matches this NAME")
+		return nil, err
 	}
 	return endpoint, nil
 }
@@ -152,7 +163,12 @@ func (HCN *FakeHCN) GetLoadBalancerByID(loadBalancerId string) (*hcn.HostCompute
 			loadbalancer.SchemaVersion = lb.SchemaVersion
 			loadbalancer.PortMappings = lb.PortMappings
 			loadbalancer.FrontendVIPs = lb.FrontendVIPs
+			break
 		}
+	}
+	if loadbalancer.Id == "" {
+		err := errors.New("No loadBalancer matches this ID")
+		return nil, err
 	}
 	return loadbalancer, nil
 }

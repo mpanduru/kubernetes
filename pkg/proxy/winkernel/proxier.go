@@ -29,7 +29,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Microsoft/hcsshim"
 	"github.com/Microsoft/hcsshim/hcn"
 	v1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
@@ -74,7 +73,7 @@ type WindowsKernelCompatTester struct{}
 
 // IsCompatible returns true if winkernel can support this mode of proxy
 func (lkct WindowsKernelCompatTester) IsCompatible() error {
-	_, err := hcsshim.HNSListPolicyListRequest() //hcn.listloadbalancer
+	_, err := hcn.ListLoadBalancers()
 	if err != nil {
 		return fmt.Errorf("Windows kernel is not compatible for Kernel mode")
 	}
@@ -823,18 +822,17 @@ func (svcInfo *serviceInfo) deleteAllHnsLoadBalancerPolicy() {
 }
 
 func deleteAllHnsLoadBalancerPolicy() {
-	plists, err := hcsshim.HNSListPolicyListRequest()
+	lbalancers, err := hcn.ListLoadBalancers()
 	if err != nil {
 		return
 	}
-	for _, plist := range plists {
-		klog.V(3).InfoS("Remove policy", "policies", plist)
-		_, err = plist.Delete()
+	for _, lbalancer := range lbalancers {
+		klog.V(3).InfoS("Remove policy", "policies", lbalancer)
+		err = lbalancer.Delete()
 		if err != nil {
 			klog.ErrorS(err, "Failed to delete policy list")
 		}
 	}
-
 }
 
 func getHnsNetworkInfo(hnsNetworkName string) (*hnsNetworkInfo, error) {

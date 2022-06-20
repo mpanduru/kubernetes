@@ -30,6 +30,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
+	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/proxy"
 	"k8s.io/kubernetes/pkg/proxy/healthcheck"
 	"k8s.io/kubernetes/pkg/proxy/winkernel/hcntesting"
@@ -1153,7 +1156,7 @@ func TestNodePort(t *testing.T) {
 		makeTestEndpointSlice(svcPortName.Namespace, svcPortName.Name, 1, func(eps *discovery.EndpointSlice) {
 			eps.AddressType = discovery.AddressTypeIPv4
 			eps.Endpoints = []discovery.Endpoint{{
-				Addresses: []string{epIpAddress},
+				Addresses: []string{epIpAddressRemote},
 			}}
 			eps.Ports = []discovery.EndpointPort{{
 				Name:     utilpointer.StringPtr(svcPortName.Port),
@@ -1185,7 +1188,7 @@ func TestNodePort(t *testing.T) {
 func TestNodePortReject(t *testing.T) {
 	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
 	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
-	svcIP := "172.30.0.41"
+	svcIP := "10.20.30.41"
 	svcPort := 80
 	svcNodePort := 3001
 	svcPortName := proxy.ServicePortName{
@@ -1211,8 +1214,1130 @@ func TestNodePortReject(t *testing.T) {
 
 	svc := proxier.serviceMap[svcPortName]
 	_, ok := svc.(*serviceInfo)
+	//The Node Port should be rejected so the casting to serviceInfo should not be possible
 	if ok {
-		t.Errorf("Service info is not empty. Unexpected behaviour")
+		t.Errorf("Service ns1/svc1:p80 shoud be REJECTED. Unexpected behaviour!")
+	}
+}
+
+func TestClusterIpReject(t *testing.T) {
+	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
+	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
+	svcIP := "10.20.30.41"
+	svcPort := 80
+	svcPortName := proxy.ServicePortName{
+		NamespacedName: makeNSN("ns1", "svc1"),
+		Port:           "p80",
+	}
+
+	makeServiceMap(proxier,
+		makeTestService(svcPortName.Namespace, svcPortName.Name, func(svc *v1.Service) {
+			svc.Spec.ClusterIP = svcIP
+			svc.Spec.Ports = []v1.ServicePort{{
+				Name:     svcPortName.Port,
+				Port:     int32(svcPort),
+				Protocol: v1.ProtocolTCP,
+			}}
+		}),
+	)
+
+	proxier.setInitialized(true)
+	proxier.syncProxyRules()
+
+	svc := proxier.serviceMap[svcPortName]
+	_, ok := svc.(*serviceInfo)
+	//The ClusterIp should be rejected so the casting to serviceInfo should not be possible
+	if ok {
+		t.Errorf("Service ns1/svc1:p80 shoud be REJECTED. Unexpected behaviour!")
+	}
+}
+
+func TestLoadBalancerReject(t *testing.T) {
+	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
+	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
+	svcIP := "10.20.30.41"
+	svcPort := 80
+	svcNodePort := 3001
+	svcHealthCheckNodePort := 30000
+	svcLBIP := "11.21.31.41"
+	svcPortName := proxy.ServicePortName{
+		NamespacedName: makeNSN("ns1", "svc1"),
+		Port:           "p80",
+		Protocol:       v1.ProtocolTCP,
+	}
+	svcSessionAffinityTimeout := int32(10800)
+	makeServiceMap(proxier,
+		makeTestService(svcPortName.Namespace, svcPortName.Name, func(svc *v1.Service) {
+			svc.Spec.Type = "LoadBalancer"
+			svc.Spec.ClusterIP = svcIP
+			svc.Spec.Ports = []v1.ServicePort{{
+				Name:     svcPortName.Port,
+				Port:     int32(svcPort),
+				Protocol: v1.ProtocolTCP,
+				NodePort: int32(svcNodePort),
+			}}
+			svc.Spec.HealthCheckNodePort = int32(svcHealthCheckNodePort)
+			svc.Status.LoadBalancer.Ingress = []v1.LoadBalancerIngress{{
+				IP: svcLBIP,
+			}}
+			svc.Spec.ExternalTrafficPolicy = v1.ServiceExternalTrafficPolicyTypeLocal
+			svc.Spec.SessionAffinity = v1.ServiceAffinityClientIP
+			svc.Spec.SessionAffinityConfig = &v1.SessionAffinityConfig{
+				ClientIP: &v1.ClientIPConfig{TimeoutSeconds: &svcSessionAffinityTimeout},
+			}
+		}),
+	)
+
+	proxier.setInitialized(true)
+	proxier.syncProxyRules()
+
+	svc := proxier.serviceMap[svcPortName]
+	svcInfo, ok := svc.(*serviceInfo)
+	if !ok {
+		t.Errorf("Failed to cast serviceInfo %q", svcPortName.String())
+
+	} else { //service has no endpoints so the lb policy should not have been applied
+		if svcInfo.policyApplied {
+			t.Errorf("Service ns1/svc1:p80 has no endpoint information available, but policies are applied. Unexpected behaviour!")
+		}
+	}
+
+	//no LoadBalancers should have been created so this should fail
+	_, err := testHNS.hcninstance.GetLoadBalancerByID(guid)
+
+	if err == nil {
+		t.Error(err)
+	}
+}
+func TestExternalIPsReject(t *testing.T) {
+	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
+	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
+	svcIP := "10.20.30.41"
+	svcPort := 80
+	svcExternalIPs := "50.60.70.81"
+	svcPortName := proxy.ServicePortName{
+		NamespacedName: makeNSN("ns1", "svc1"),
+		Port:           "p80",
+	}
+
+	makeServiceMap(proxier,
+		makeTestService(svcPortName.Namespace, svcPortName.Name, func(svc *v1.Service) {
+			svc.Spec.Type = "ClusterIP"
+			svc.Spec.ClusterIP = svcIP
+			svc.Spec.ExternalIPs = []string{svcExternalIPs}
+			svc.Spec.Ports = []v1.ServicePort{{
+				Name:       svcPortName.Port,
+				Port:       int32(svcPort),
+				Protocol:   v1.ProtocolTCP,
+				TargetPort: intstr.FromInt(svcPort),
+			}}
+		}),
+	)
+
+	proxier.setInitialized(true)
+	proxier.syncProxyRules()
+
+	svc := proxier.serviceMap[svcPortName]
+	_, ok := svc.(*serviceInfo) //The ExternalIP should be rejected so the casting to serviceInfo should not be possible
+	if ok {
+		t.Errorf("Service ns1/svc1:p80 shoud be REJECTED. Unexpected behaviour!")
+	}
+}
+
+func TestClusterIPEndpointsJump(t *testing.T) {
+	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
+	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
+	svcIP := "10.20.30.41"
+	svcPort := 80
+	svcPortName := proxy.ServicePortName{
+		NamespacedName: makeNSN("ns1", "svc1"),
+		Port:           "p80",
+		Protocol:       v1.ProtocolTCP,
+	}
+
+	makeServiceMap(proxier,
+		makeTestService(svcPortName.Namespace, svcPortName.Name, func(svc *v1.Service) {
+			svc.Spec.ClusterIP = svcIP
+			svc.Spec.Ports = []v1.ServicePort{{
+				Name:     svcPortName.Port,
+				Port:     int32(svcPort),
+				Protocol: v1.ProtocolTCP,
+			}}
+		}),
+	)
+
+	tcpProtocol := v1.ProtocolTCP
+	populateEndpointSlices(proxier,
+		makeTestEndpointSlice(svcPortName.Namespace, svcPortName.Name, 1, func(eps *discovery.EndpointSlice) {
+			eps.AddressType = discovery.AddressTypeIPv4
+			eps.Endpoints = []discovery.Endpoint{{
+				Addresses: []string{epIpAddressRemote},
+			}}
+			eps.Ports = []discovery.EndpointPort{{
+				Name:     utilpointer.StringPtr(svcPortName.Port),
+				Port:     utilpointer.Int32(int32(svcPort)),
+				Protocol: &tcpProtocol,
+			}}
+		}),
+	)
+
+	proxier.setInitialized(true)
+	proxier.syncProxyRules()
+
+	svc := proxier.serviceMap[svcPortName]
+	svcInfo, ok := svc.(*serviceInfo)
+	if !ok {
+		t.Errorf("Failed to cast serviceInfo %q", svcPortName.String())
+
+	} else {
+		if svcInfo.hnsID != guid {
+			t.Errorf("%v does not match %v", svcInfo.hnsID, guid)
+		}
+		if !svcInfo.BaseServiceInfo.UsesClusterEndpoints() {
+			t.Error()
+		}
+	}
+}
+
+func TestOnlyLocalExternalIPs(t *testing.T) {
+	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
+	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
+
+	svcIP := "10.20.30.41"
+	svcPort := 80
+	svcExternalIPs := "50.60.70.81"
+	svcPortName := proxy.ServicePortName{
+		NamespacedName: makeNSN("ns1", "svc1"),
+		Port:           "p80",
+		Protocol:       v1.ProtocolTCP,
+	}
+
+	makeServiceMap(proxier,
+		makeTestService(svcPortName.Namespace, svcPortName.Name, func(svc *v1.Service) {
+			svc.Spec.Type = "NodePort"
+			svc.Spec.ExternalTrafficPolicy = v1.ServiceExternalTrafficPolicyTypeLocal
+			svc.Spec.ClusterIP = svcIP
+			svc.Spec.ExternalIPs = []string{svcExternalIPs}
+			svc.Spec.Ports = []v1.ServicePort{{
+				Name:       svcPortName.Port,
+				Port:       int32(svcPort),
+				Protocol:   v1.ProtocolTCP,
+				TargetPort: intstr.FromInt(svcPort),
+			}}
+		}),
+	)
+	tcpProtocol := v1.ProtocolTCP
+	populateEndpointSlices(proxier,
+		makeTestEndpointSlice(svcPortName.Namespace, svcPortName.Name, 1, func(eps *discovery.EndpointSlice) {
+			eps.AddressType = discovery.AddressTypeIPv4
+			eps.Endpoints = []discovery.Endpoint{{
+				Addresses: []string{epIpAddressRemote},
+			}, {
+				Addresses: []string{epIpAddressRemote},
+				NodeName:  utilpointer.StringPtr(testHostName),
+			}}
+			eps.Ports = []discovery.EndpointPort{{
+				Name:     utilpointer.StringPtr(svcPortName.Port),
+				Port:     utilpointer.Int32(int32(svcPort)),
+				Protocol: &tcpProtocol,
+			}}
+		}),
+	)
+
+	proxier.setInitialized(true)
+	proxier.syncProxyRules()
+
+	svc := proxier.serviceMap[svcPortName]
+	svcInfo, ok := svc.(*serviceInfo)
+	if !ok {
+		t.Errorf("Failed to cast serviceInfo %q", svcPortName.String())
+
+	} else {
+		if svcInfo.hnsID != guid {
+			t.Errorf("%v does not match %v", svcInfo.hnsID, guid)
+		}
+		if svcInfo.remoteEndpoint.ip != svcIP {
+			t.Errorf("Ip %v does not match %v", svcInfo.remoteEndpoint.ip, svcIP)
+		}
+		if !svcInfo.BaseServiceInfo.ExternalPolicyLocal() {
+			t.Error("Traffic policy not local")
+		}
+	}
+}
+
+func TestNonLocalExternalIPs(t *testing.T) {
+	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
+	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
+
+	svcIP := "10.20.30.41"
+	svcPort := 80
+	svcExternalIPs := "50.60.70.81"
+	svcPortName := proxy.ServicePortName{
+		NamespacedName: makeNSN("ns1", "svc1"),
+		Port:           "p80",
+		Protocol:       v1.ProtocolTCP,
+	}
+
+	makeServiceMap(proxier,
+		makeTestService(svcPortName.Namespace, svcPortName.Name, func(svc *v1.Service) {
+			svc.Spec.ClusterIP = svcIP
+			svc.Spec.ExternalIPs = []string{svcExternalIPs}
+			svc.Spec.Ports = []v1.ServicePort{{
+				Name:       svcPortName.Port,
+				Port:       int32(svcPort),
+				Protocol:   v1.ProtocolTCP,
+				TargetPort: intstr.FromInt(svcPort),
+			}}
+		}),
+	)
+	tcpProtocol := v1.ProtocolTCP
+	populateEndpointSlices(proxier,
+		makeTestEndpointSlice(svcPortName.Namespace, svcPortName.Name, 1, func(eps *discovery.EndpointSlice) {
+			eps.AddressType = discovery.AddressTypeIPv4
+			eps.Endpoints = []discovery.Endpoint{{
+				Addresses: []string{epIpAddressRemote},
+				NodeName:  nil,
+			}, {
+				Addresses: []string{epIpAddressRemote},
+				NodeName:  utilpointer.StringPtr(testHostName),
+			}}
+			eps.Ports = []discovery.EndpointPort{{
+				Name:     utilpointer.StringPtr(svcPortName.Port),
+				Port:     utilpointer.Int32(int32(svcPort)),
+				Protocol: &tcpProtocol,
+			}}
+		}),
+	)
+
+	proxier.setInitialized(true)
+	proxier.syncProxyRules()
+
+	svc := proxier.serviceMap[svcPortName]
+	svcInfo, ok := svc.(*serviceInfo)
+	if !ok {
+		t.Errorf("Failed to cast serviceInfo %q", svcPortName.String())
+
+	} else {
+		if svcInfo.hnsID != guid {
+			t.Errorf("%v does not match %v", svcInfo.hnsID, guid)
+		}
+		if svcInfo.remoteEndpoint.ip != svcIP {
+			t.Errorf("Ip %v does not match %v", svcInfo.remoteEndpoint.ip, svcIP)
+		}
+		if svcInfo.BaseServiceInfo.ExternalPolicyLocal() {
+			t.Error("Traffic policy is local when it should be non-local")
+		}
+	}
+}
+
+func TestHealthCheckNodePort(t *testing.T) {
+	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
+	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
+
+	svcIP := "10.20.30.41"
+	svcPort := 80
+	svcNodePort := 3001
+	svcHealthCheckNodePort := 30000
+	svcPortName := proxy.ServicePortName{
+		NamespacedName: makeNSN("ns1", "svc1"),
+		Port:           "p80",
+		Protocol:       v1.ProtocolTCP,
+	}
+
+	makeServiceMap(proxier,
+		makeTestService(svcPortName.Namespace, svcPortName.Name, func(svc *v1.Service) {
+			svc.Spec.Type = "LoadBalancer"
+			svc.Spec.ClusterIP = svcIP
+			svc.Spec.Ports = []v1.ServicePort{{
+				Name:     svcPortName.Port,
+				Port:     int32(svcPort),
+				Protocol: v1.ProtocolTCP,
+				NodePort: int32(svcNodePort),
+			}}
+			svc.Spec.HealthCheckNodePort = int32(svcHealthCheckNodePort)
+			svc.Spec.ExternalTrafficPolicy = v1.ServiceExternalTrafficPolicyTypeLocal
+		}),
+	)
+
+	proxier.setInitialized(true)
+	proxier.syncProxyRules()
+
+	svc := proxier.serviceMap[svcPortName]
+	svcInfo, ok := svc.(*serviceInfo)
+	if !ok {
+		t.Errorf("Failed to cast serviceInfo %q", svcPortName.String())
+
+	} else {
+		if svcInfo.BaseServiceInfo.HealthCheckNodePort() != svcHealthCheckNodePort {
+			t.Errorf("Node port health check is null")
+		}
+	}
+}
+
+func TestBuildServiceMapAddRemove(t *testing.T) {
+	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
+	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
+
+	services := []*v1.Service{
+		makeTestService("somewhere-else", "cluster-ip", func(svc *v1.Service) {
+			svc.Spec.Type = v1.ServiceTypeClusterIP
+			svc.Spec.ClusterIP = "10.20.30.42"
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "something", "UDP", 1234, 4321, 0)
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "somethingelse", "UDP", 1235, 5321, 0)
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "sctpport", "SCTP", 1236, 6321, 0)
+		}),
+		makeTestService("somewhere-else", "node-port", func(svc *v1.Service) {
+			svc.Spec.Type = v1.ServiceTypeNodePort
+			svc.Spec.ClusterIP = "10.20.30.44"
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "blahblah", "UDP", 345, 678, 0)
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "moreblahblah", "TCP", 344, 677, 0)
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "muchmoreblah", "SCTP", 343, 676, 0)
+		}),
+		makeTestService("somewhere", "load-balancer", func(svc *v1.Service) {
+			svc.Spec.Type = v1.ServiceTypeLoadBalancer
+			svc.Spec.ClusterIP = "10.20.30.47"
+			svc.Spec.LoadBalancerIP = "11.21.31.41"
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "foobar", "UDP", 8675, 30061, 7000)
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "baz", "UDP", 8676, 30062, 7001)
+			svc.Status.LoadBalancer = v1.LoadBalancerStatus{
+				Ingress: []v1.LoadBalancerIngress{
+					{IP: "11.21.31.41"},
+				},
+			}
+		}),
+		makeTestService("somewhere", "only-local-load-balancer", func(svc *v1.Service) {
+			svc.Spec.Type = v1.ServiceTypeLoadBalancer
+			svc.Spec.ClusterIP = "10.20.30.49"
+			svc.Spec.LoadBalancerIP = "11.21.31.42"
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "foobar2", "UDP", 8677, 30063, 7002)
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "baz", "UDP", 8678, 30064, 7003)
+			svc.Status.LoadBalancer = v1.LoadBalancerStatus{
+				Ingress: []v1.LoadBalancerIngress{
+					{IP: "11.21.31.42"},
+				},
+			}
+			svc.Spec.ExternalTrafficPolicy = v1.ServiceExternalTrafficPolicyTypeLocal
+			svc.Spec.HealthCheckNodePort = 345
+		}),
+	}
+
+	for i := range services {
+		proxier.OnServiceAdd(services[i])
+	}
+	result := proxier.serviceMap.Update(proxier.serviceChanges)
+	if len(proxier.serviceMap) != 10 {
+		t.Errorf("expected service map length 10, got %v", proxier.serviceMap)
+	}
+
+	// The only-local-loadbalancer ones get added
+	if len(result.HCServiceNodePorts) != 1 {
+		t.Errorf("expected 1 healthcheck port, got %v", result.HCServiceNodePorts)
+	} else {
+		nsn := makeNSN("somewhere", "only-local-load-balancer")
+		if port, found := result.HCServiceNodePorts[nsn]; !found || port != 345 {
+			t.Errorf("expected healthcheck port [%q]=345: got %v", nsn, result.HCServiceNodePorts)
+		}
+	}
+
+	if len(result.UDPStaleClusterIP) != 0 {
+		// Services only added, so nothing stale yet
+		t.Errorf("expected stale UDP services length 0, got %d", len(result.UDPStaleClusterIP))
+	}
+
+	// Remove some stuff
+	// oneService is a modification of services[0] with removed first port.
+	oneService := makeTestService("somewhere-else", "cluster-ip", func(svc *v1.Service) {
+		svc.Spec.Type = v1.ServiceTypeClusterIP
+		svc.Spec.ClusterIP = "10.20.30.45"
+		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "somethingelse", "UDP", 1235, 5321, 0)
+	})
+
+	proxier.OnServiceUpdate(services[0], oneService)
+	proxier.OnServiceDelete(services[1])
+	proxier.OnServiceDelete(services[2])
+	proxier.OnServiceDelete(services[3])
+
+	result = proxier.serviceMap.Update(proxier.serviceChanges)
+	if len(proxier.serviceMap) != 1 {
+		t.Errorf("expected service map length 1, got %v", proxier.serviceMap)
+	}
+
+	if len(result.HCServiceNodePorts) != 0 {
+		t.Errorf("expected 0 healthcheck ports, got %v", result.HCServiceNodePorts)
+	}
+
+	// All services but one were deleted. While you'd expect only the ClusterIPs
+	// from the three deleted services here, we still have the ClusterIP for
+	// the not-deleted service, because one of it's ServicePorts was deleted.
+	expectedStaleUDPServices := []string{"10.20.30.42", "10.20.30.44", "10.20.30.47", "10.20.30.49"}
+	if len(result.UDPStaleClusterIP) != len(expectedStaleUDPServices) {
+		t.Errorf("expected stale UDP services length %d, got %v", len(expectedStaleUDPServices), result.UDPStaleClusterIP.UnsortedList())
+	}
+	for _, ip := range expectedStaleUDPServices {
+		if !result.UDPStaleClusterIP.Has(ip) {
+			t.Errorf("expected stale UDP service service %s", ip)
+		}
+	}
+}
+
+func TestBuildServiceMapServiceHeadless(t *testing.T) {
+	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
+	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
+
+	makeServiceMap(proxier,
+		makeTestService("somewhere-else", "headless", func(svc *v1.Service) {
+			svc.Spec.Type = v1.ServiceTypeClusterIP
+			svc.Spec.ClusterIP = v1.ClusterIPNone
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "rpc", "UDP", 1234, 0, 0)
+		}),
+		makeTestService("somewhere-else", "headless-without-port", func(svc *v1.Service) {
+			svc.Spec.Type = v1.ServiceTypeClusterIP
+			svc.Spec.ClusterIP = v1.ClusterIPNone
+		}),
+	)
+
+	// Headless service should be ignored
+	result := proxier.serviceMap.Update(proxier.serviceChanges)
+	if len(proxier.serviceMap) != 0 {
+		t.Errorf("expected service map length 0, got %d", len(proxier.serviceMap))
+	}
+
+	// No proxied services, so no healthchecks
+	if len(result.HCServiceNodePorts) != 0 {
+		t.Errorf("expected healthcheck ports length 0, got %d", len(result.HCServiceNodePorts))
+	}
+
+	if len(result.UDPStaleClusterIP) != 0 {
+		t.Errorf("expected stale UDP services length 0, got %d", len(result.UDPStaleClusterIP))
+	}
+}
+
+func TestBuildServiceMapServiceTypeExternalName(t *testing.T) {
+	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
+	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
+
+	makeServiceMap(proxier,
+		makeTestService("somewhere-else", "external-name", func(svc *v1.Service) {
+			svc.Spec.Type = v1.ServiceTypeExternalName
+			svc.Spec.ClusterIP = "10.20.30.42" // Should be ignored
+			svc.Spec.ExternalName = "foo2.bar.com"
+			svc.Spec.Ports = addTestPort(svc.Spec.Ports, "blah", "UDP", 1235, 5321, 0)
+		}),
+	)
+
+	result := proxier.serviceMap.Update(proxier.serviceChanges)
+	if len(proxier.serviceMap) != 0 {
+		t.Errorf("expected service map length 0, got %v", proxier.serviceMap)
+	}
+	// No proxied services, so no healthchecks
+	if len(result.HCServiceNodePorts) != 0 {
+		t.Errorf("expected healthcheck ports length 0, got %v", result.HCServiceNodePorts)
+	}
+	if len(result.UDPStaleClusterIP) != 0 {
+		t.Errorf("expected stale UDP services length 0, got %v", result.UDPStaleClusterIP)
+	}
+}
+
+func TestBuildServiceMapServiceUpdate(t *testing.T) {
+	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
+	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
+
+	servicev1 := makeTestService("somewhere", "some-service", func(svc *v1.Service) {
+		svc.Spec.Type = v1.ServiceTypeClusterIP
+		svc.Spec.ClusterIP = "10.20.30.42"
+		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "something", "UDP", 1234, 4321, 0)
+		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "somethingelse", "TCP", 1235, 5321, 0)
+	})
+	servicev2 := makeTestService("somewhere", "some-service", func(svc *v1.Service) {
+		svc.Spec.Type = v1.ServiceTypeLoadBalancer
+		svc.Spec.ClusterIP = "10.20.30.42"
+		svc.Spec.LoadBalancerIP = "11.21.31.41"
+		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "something", "UDP", 1234, 4321, 7002)
+		svc.Spec.Ports = addTestPort(svc.Spec.Ports, "somethingelse", "TCP", 1235, 5321, 7003)
+		svc.Status.LoadBalancer = v1.LoadBalancerStatus{
+			Ingress: []v1.LoadBalancerIngress{
+				{IP: "11.21.31.41"},
+			},
+		}
+		svc.Spec.ExternalTrafficPolicy = v1.ServiceExternalTrafficPolicyTypeLocal
+		svc.Spec.HealthCheckNodePort = 345
+	})
+
+	proxier.OnServiceAdd(servicev1)
+
+	result := proxier.serviceMap.Update(proxier.serviceChanges)
+	if len(proxier.serviceMap) != 2 {
+		t.Errorf("expected service map length 2, got %v", proxier.serviceMap)
+	}
+	if len(result.HCServiceNodePorts) != 0 {
+		t.Errorf("expected healthcheck ports length 0, got %v", result.HCServiceNodePorts)
+	}
+	if len(result.UDPStaleClusterIP) != 0 {
+		// Services only added, so nothing stale yet
+		t.Errorf("expected stale UDP services length 0, got %d", len(result.UDPStaleClusterIP))
+	}
+
+	// Change service to load-balancer
+	proxier.OnServiceUpdate(servicev1, servicev2)
+	result = proxier.serviceMap.Update(proxier.serviceChanges)
+	if len(proxier.serviceMap) != 2 {
+		t.Errorf("expected service map length 2, got %v", proxier.serviceMap)
+	}
+	if len(result.HCServiceNodePorts) != 1 {
+		t.Errorf("expected healthcheck ports length 1, got %v", result.HCServiceNodePorts)
+	}
+	if len(result.UDPStaleClusterIP) != 0 {
+		t.Errorf("expected stale UDP services length 0, got %v", result.UDPStaleClusterIP.UnsortedList())
+	}
+
+	// No change; make sure the service map stays the same and there are
+	// no health-check changes
+	proxier.OnServiceUpdate(servicev2, servicev2)
+	result = proxier.serviceMap.Update(proxier.serviceChanges)
+	if len(proxier.serviceMap) != 2 {
+		t.Errorf("expected service map length 2, got %v", proxier.serviceMap)
+	}
+	if len(result.HCServiceNodePorts) != 1 {
+		t.Errorf("expected healthcheck ports length 1, got %v", result.HCServiceNodePorts)
+	}
+	if len(result.UDPStaleClusterIP) != 0 {
+		t.Errorf("expected stale UDP services length 0, got %v", result.UDPStaleClusterIP.UnsortedList())
+	}
+
+	// And back to ClusterIP
+	proxier.OnServiceUpdate(servicev2, servicev1)
+	result = proxier.serviceMap.Update(proxier.serviceChanges)
+	if len(proxier.serviceMap) != 2 {
+		t.Errorf("expected service map length 2, got %v", proxier.serviceMap)
+	}
+	if len(result.HCServiceNodePorts) != 0 {
+		t.Errorf("expected healthcheck ports length 0, got %v", result.HCServiceNodePorts)
+	}
+	if len(result.UDPStaleClusterIP) != 0 {
+		// Services only added, so nothing stale yet
+		t.Errorf("expected stale UDP services length 0, got %d", len(result.UDPStaleClusterIP))
+	}
+}
+
+func TestEndpointSliceE2E(t *testing.T) {
+	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
+	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
+	if proxier == nil {
+		t.Error()
+	}
+
+	proxier.servicesSynced = true
+	proxier.endpointSlicesSynced = true
+
+	svcPortName := proxy.ServicePortName{
+		NamespacedName: makeNSN("ns1", "svc1"),
+		Port:           "p80",
+		Protocol:       v1.ProtocolTCP,
+	}
+
+	proxier.OnServiceAdd(&v1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: svcPortName.Name, Namespace: svcPortName.Namespace},
+		Spec: v1.ServiceSpec{
+			ClusterIP: "172.20.1.1",
+			Selector:  map[string]string{"foo": "bar"},
+			Ports:     []v1.ServicePort{{Name: svcPortName.Port, TargetPort: intstr.FromInt(80), Protocol: v1.ProtocolTCP}},
+		},
+	})
+
+	tcpProtocol := v1.ProtocolTCP
+	endpointSlice := &discovery.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-1", svcPortName.Name),
+			Namespace: svcPortName.Namespace,
+			Labels:    map[string]string{discovery.LabelServiceName: svcPortName.Name},
+		},
+		Ports: []discovery.EndpointPort{{
+			Name:     &svcPortName.Port,
+			Port:     utilpointer.Int32Ptr(80),
+			Protocol: &tcpProtocol,
+		}},
+		AddressType: discovery.AddressTypeIPv4,
+		Endpoints: []discovery.Endpoint{{
+			Addresses:  []string{"192.168.2.3"},
+			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
+			NodeName:   utilpointer.StringPtr(testHostName),
+		}, {
+			Addresses:  []string{"192.168.2.4"},
+			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
+			NodeName:   utilpointer.StringPtr("node2"),
+		}, {
+			Addresses:  []string{"192.168.2.5"},
+			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
+			NodeName:   utilpointer.StringPtr("node3"),
+		}, {
+			Addresses:  []string{"192.168.2.6"},
+			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(false)},
+			NodeName:   utilpointer.StringPtr("node4"),
+		}},
+	}
+
+	proxier.OnEndpointSliceAdd(endpointSlice)
+	proxier.setInitialized(true)
+	proxier.syncProxyRules()
+
+	svc := proxier.serviceMap[svcPortName]
+	svcInfo, ok := svc.(*serviceInfo)
+	if !ok {
+		t.Errorf("Failed to cast serviceInfo %q", svcPortName.String())
+
+	} else {
+		if svcInfo.hnsID != guid {
+			t.Errorf("The Hns Loadbalancer Id %v does not match %v. ServicePortName %q", svcInfo.hnsID, guid, svcPortName.String())
+		}
+	}
+
+	ep := proxier.endpointsMap[svcPortName][0]
+	epInfo, ok := ep.(*endpointsInfo)
+	if !ok {
+		t.Errorf("Failed to cast endpointsInfo %q", svcPortName.String())
+
+	} else {
+		if epInfo.hnsID != guid {
+			t.Errorf("Hns EndpointId %v does not match %v. ServicePortName %q", epInfo.hnsID, guid, svcPortName.String())
+		}
+	}
+
+	proxier.setInitialized(false)
+	proxier.OnEndpointSliceDelete(endpointSlice)
+	proxier.setInitialized(true)
+	proxier.syncProxyRules()
+
+	svc = proxier.serviceMap[svcPortName]
+	svcInfo, ok = svc.(*serviceInfo)
+	if !ok {
+		t.Errorf("Failed to cast serviceInfo %q", svcPortName.String())
+
+	} else { //policy should not be applied here
+		if svcInfo.policyApplied {
+			t.Error("Service ns1/svc1:p80 has no endpoint information available, but policies are applied. Unexpected behaviour!")
+		}
+	}
+}
+
+func TestInternalTrafficPolicyE2E(t *testing.T) {
+	type endpoint struct {
+		ip       string
+		hostname string
+	}
+
+	cluster := v1.ServiceInternalTrafficPolicyCluster
+	local := v1.ServiceInternalTrafficPolicyLocal
+
+	testCases := []struct {
+		name                  string
+		internalTrafficPolicy *v1.ServiceInternalTrafficPolicyType
+		featureGateOn         bool
+		endpoints             []endpoint
+		expectEndpointRule    bool
+	}{
+		{
+			name:                  "internalTrafficPolicy is cluster",
+			internalTrafficPolicy: &cluster,
+			featureGateOn:         true,
+			endpoints: []endpoint{
+				{"10.0.1.1", testHostName},
+				{"10.0.1.2", "host1"},
+				{"10.0.1.3", "host2"},
+			},
+			expectEndpointRule: true,
+		},
+		{
+			name:                  "internalTrafficPolicy is local and there is non-zero local endpoints",
+			internalTrafficPolicy: &local,
+			featureGateOn:         true,
+			endpoints: []endpoint{
+				{"10.0.1.1", testHostName},
+				{"10.0.1.2", "host1"},
+				{"10.0.1.3", "host2"},
+			},
+			expectEndpointRule: true,
+		},
+		{
+			name:                  "internalTrafficPolicy is local and there is zero local endpoint",
+			internalTrafficPolicy: &local,
+			featureGateOn:         true,
+			endpoints: []endpoint{
+				{"10.0.1.1", "host0"},
+				{"10.0.1.2", "host1"},
+				{"10.0.1.3", "host2"},
+			},
+			expectEndpointRule: false,
+		},
+		{
+			name:                  "internalTrafficPolicy is local and there is non-zero local endpoint with feature gate off",
+			internalTrafficPolicy: &local,
+			featureGateOn:         false,
+			endpoints: []endpoint{
+				{"10.0.1.1", testHostName},
+				{"10.0.1.2", "host1"},
+				{"10.0.1.3", "host2"},
+			},
+			expectEndpointRule: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ServiceInternalTrafficPolicy, tc.featureGateOn)()
+
+			testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
+			proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
+			if proxier == nil {
+				t.Error()
+			}
+
+			proxier.servicesSynced = true
+			proxier.endpointSlicesSynced = true
+
+			svcPortName := proxy.ServicePortName{
+				NamespacedName: makeNSN("ns1", "svc1"),
+				Port:           "p80",
+				Protocol:       v1.ProtocolTCP,
+			}
+
+			svc := &v1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: svcPortName.Name, Namespace: svcPortName.Namespace},
+				Spec: v1.ServiceSpec{
+					ClusterIP: "172.20.1.1",
+					Selector:  map[string]string{"foo": "bar"},
+					Ports:     []v1.ServicePort{{Name: svcPortName.Port, Port: 80, Protocol: v1.ProtocolTCP}},
+				},
+			}
+			if tc.internalTrafficPolicy != nil {
+				svc.Spec.InternalTrafficPolicy = tc.internalTrafficPolicy
+			}
+
+			proxier.OnServiceAdd(svc)
+
+			tcpProtocol := v1.ProtocolTCP
+			endpointSlice := &discovery.EndpointSlice{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("%s-1", svcPortName.Name),
+					Namespace: svcPortName.Namespace,
+					Labels:    map[string]string{discovery.LabelServiceName: svcPortName.Name},
+				},
+				Ports: []discovery.EndpointPort{{
+					Name:     &svcPortName.Port,
+					Port:     utilpointer.Int32Ptr(80),
+					Protocol: &tcpProtocol,
+				}},
+				AddressType: discovery.AddressTypeIPv4,
+			}
+			for _, ep := range tc.endpoints {
+				endpointSlice.Endpoints = append(endpointSlice.Endpoints, discovery.Endpoint{
+					Addresses:  []string{ep.ip},
+					Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
+					NodeName:   utilpointer.StringPtr(ep.hostname),
+				})
+			}
+
+			proxier.OnEndpointSliceAdd(endpointSlice)
+			proxier.setInitialized(true)
+			proxier.syncProxyRules()
+
+			sVc := proxier.serviceMap[svcPortName]
+			svcInfo, ok := sVc.(*serviceInfo)
+			if !ok {
+				t.Errorf("Failed to cast serviceInfo %q", svcPortName.String())
+
+			} else {
+				if svcInfo.hnsID != guid {
+					t.Errorf("The Hns Loadbalancer Id %v does not match %v. ServicePortName %q", svcInfo.hnsID, guid, svcPortName.String())
+				}
+			}
+
+			ep := proxier.endpointsMap[svcPortName][0]
+			epInfo, ok := ep.(*endpointsInfo)
+			if !ok {
+				t.Errorf("Failed to cast endpointsInfo %q", svcPortName.String())
+
+			} else {
+				if epInfo.hnsID != guid {
+					t.Errorf("Hns EndpointId %v does not match %v. ServicePortName %q", epInfo.hnsID, guid, svcPortName.String())
+				}
+			}
+
+			if tc.expectEndpointRule {
+				proxier.setInitialized(false)
+				proxier.OnEndpointSliceDelete(endpointSlice)
+				proxier.setInitialized(true)
+				proxier.syncProxyRules()
+
+				sVc = proxier.serviceMap[svcPortName]
+				svcInfo, ok = sVc.(*serviceInfo)
+				if !ok {
+					t.Errorf("Failed to cast serviceInfo %q", svcPortName.String())
+
+				} else { //policy should not be applied here
+					if svcInfo.policyApplied {
+						t.Error("Service ns1/svc1:p80 has no endpoint information available, but policies are applied. Unexpected behaviour!")
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestHealthCheckNodePortE2E(t *testing.T) {
+	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
+	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
+	if proxier == nil {
+		t.Error()
+	}
+
+	proxier.servicesSynced = true
+	proxier.endpointSlicesSynced = true
+
+	svcPortName := proxy.ServicePortName{
+		NamespacedName: makeNSN("ns1", "svc1"),
+		Port:           "p80",
+		Protocol:       v1.ProtocolTCP,
+	}
+
+	svc := &v1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: svcPortName.Name, Namespace: svcPortName.Namespace},
+		Spec: v1.ServiceSpec{
+			ClusterIP:             "172.20.1.1",
+			Selector:              map[string]string{"foo": "bar"},
+			Ports:                 []v1.ServicePort{{Name: svcPortName.Port, TargetPort: intstr.FromInt(80), NodePort: 30010, Protocol: v1.ProtocolTCP}},
+			Type:                  "LoadBalancer",
+			HealthCheckNodePort:   30000,
+			ExternalTrafficPolicy: v1.ServiceExternalTrafficPolicyTypeLocal,
+		},
+	}
+
+	proxier.OnServiceAdd(svc)
+
+	tcpProtocol := v1.ProtocolTCP
+	endpointSlice := &discovery.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-1", svcPortName.Name),
+			Namespace: svcPortName.Namespace,
+			Labels:    map[string]string{discovery.LabelServiceName: svcPortName.Name},
+		},
+		Ports: []discovery.EndpointPort{{
+			Name:     &svcPortName.Port,
+			Port:     utilpointer.Int32Ptr(80),
+			Protocol: &tcpProtocol,
+		}},
+		AddressType: discovery.AddressTypeIPv4,
+		Endpoints: []discovery.Endpoint{{
+			Addresses:  []string{"10.0.1.1"},
+			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
+			NodeName:   utilpointer.StringPtr(testHostName),
+		}, {
+			Addresses:  []string{"10.0.1.2"},
+			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
+			NodeName:   utilpointer.StringPtr("node2"),
+		}, {
+			Addresses:  []string{"10.0.1.3"},
+			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
+			NodeName:   utilpointer.StringPtr("node3"),
+		}, {
+			Addresses:  []string{"10.0.1.4"},
+			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(false)},
+			NodeName:   utilpointer.StringPtr("node4"),
+		}},
+	}
+
+	proxier.OnEndpointSliceAdd(endpointSlice)
+	proxier.setInitialized(true)
+	proxier.syncProxyRules()
+
+	sVc := proxier.serviceMap[svcPortName]
+	svcInfo, ok := sVc.(*serviceInfo)
+	if !ok {
+		t.Errorf("Failed to cast serviceInfo %q", svcPortName.String())
+
+	} else {
+		if svcInfo.hnsID != guid {
+			t.Errorf("The Hns Loadbalancer Id %v does not match %v. ServicePortName %q", svcInfo.hnsID, guid, svcPortName.String())
+		}
+		if svcInfo.BaseServiceInfo.HealthCheckNodePort() != 30000 {
+			t.Errorf("Node port health check is null")
+		}
+	}
+
+	ep := proxier.endpointsMap[svcPortName][0]
+	epInfo, ok := ep.(*endpointsInfo)
+	if !ok {
+		t.Errorf("Failed to cast endpointsInfo %q", svcPortName.String())
+
+	} else {
+		if epInfo.hnsID != guid {
+			t.Errorf("Hns EndpointId %v does not match %v. ServicePortName %q", epInfo.hnsID, guid, svcPortName.String())
+		}
+	}
+
+	proxier.setInitialized(false)
+	proxier.OnServiceDelete(svc)
+	proxier.setInitialized(true)
+	proxier.syncProxyRules()
+
+	sVc = proxier.serviceMap[svcPortName]
+	svcInfo, ok = sVc.(*serviceInfo)
+	if ok {
+		t.Errorf("Service ns1/svc1:p80 shoud be REJECTED. Unexpected behaviour!")
+	}
+}
+
+func TestHealthCheckNodePortWhenTerminating(t *testing.T) {
+	testHNS := NewHCNUtils(&hcntesting.FakeHCN{})
+	proxier := NewFakeProxier(testHNS, NETWORK_TYPE_OVERLAY)
+	if proxier == nil {
+		t.Error()
+	}
+
+	proxier.servicesSynced = true
+	proxier.endpointSlicesSynced = true
+
+	svcPortName := proxy.ServicePortName{
+		NamespacedName: makeNSN("ns1", "svc1"),
+		Port:           "p80",
+		Protocol:       v1.ProtocolTCP,
+	}
+
+	proxier.OnServiceAdd(&v1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: svcPortName.Name, Namespace: svcPortName.Namespace},
+		Spec: v1.ServiceSpec{
+			ClusterIP:             "172.20.1.1",
+			Selector:              map[string]string{"foo": "bar"},
+			Ports:                 []v1.ServicePort{{Name: svcPortName.Port, TargetPort: intstr.FromInt(80), NodePort: 30010, Protocol: v1.ProtocolTCP}},
+			Type:                  "LoadBalancer",
+			HealthCheckNodePort:   30000,
+			ExternalTrafficPolicy: v1.ServiceExternalTrafficPolicyTypeLocal,
+		},
+	})
+
+	tcpProtocol := v1.ProtocolTCP
+	endpointSlice := &discovery.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-1", svcPortName.Name),
+			Namespace: svcPortName.Namespace,
+			Labels:    map[string]string{discovery.LabelServiceName: svcPortName.Name},
+		},
+		Ports: []discovery.EndpointPort{{
+			Name:     &svcPortName.Port,
+			Port:     utilpointer.Int32Ptr(80),
+			Protocol: &tcpProtocol,
+		}},
+		AddressType: discovery.AddressTypeIPv4,
+		Endpoints: []discovery.Endpoint{{
+			Addresses:  []string{"10.0.1.1"},
+			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
+			NodeName:   utilpointer.StringPtr(testHostName),
+		}, {
+			Addresses:  []string{"10.0.1.2"},
+			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
+			NodeName:   utilpointer.StringPtr(testHostName),
+		}, {
+			Addresses:  []string{"10.0.1.3"},
+			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(true)},
+			NodeName:   utilpointer.StringPtr(testHostName),
+		}, { // not ready endpoints should be ignored
+			Addresses:  []string{"10.0.1.4"},
+			Conditions: discovery.EndpointConditions{Ready: utilpointer.BoolPtr(false)},
+			NodeName:   utilpointer.StringPtr(testHostName),
+		}},
+	}
+
+	proxier.OnEndpointSliceAdd(endpointSlice)
+	proxier.setInitialized(true)
+	proxier.syncProxyRules()
+
+	sVc := proxier.serviceMap[svcPortName]
+	svcInfo, ok := sVc.(*serviceInfo)
+	if !ok {
+		t.Errorf("Failed to cast serviceInfo %q", svcPortName.String())
+
+	} else {
+		if svcInfo.hnsID != guid {
+			t.Errorf("The Hns Loadbalancer Id %v does not match %v. ServicePortName %q", svcInfo.hnsID, guid, svcPortName.String())
+		}
+
+		if svcInfo.BaseServiceInfo.HealthCheckNodePort() != 30000 {
+			t.Errorf("Node port health check is null")
+		}
+	}
+
+	ep := proxier.endpointsMap[svcPortName][0]
+	epInfo, ok := ep.(*endpointsInfo)
+	if !ok {
+		t.Errorf("Failed to cast endpointsInfo %q", svcPortName.String())
+
+	} else {
+		if epInfo.hnsID != guid {
+			t.Errorf("Hns EndpointId %v does not match %v. ServicePortName %q", epInfo.hnsID, guid, svcPortName.String())
+		}
+	}
+
+	// set all endpoints to terminating
+	endpointSliceTerminating := &discovery.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-1", svcPortName.Name),
+			Namespace: svcPortName.Namespace,
+			Labels:    map[string]string{discovery.LabelServiceName: svcPortName.Name},
+		},
+		Ports: []discovery.EndpointPort{{
+			Name:     &svcPortName.Port,
+			Port:     utilpointer.Int32Ptr(80),
+			Protocol: &tcpProtocol,
+		}},
+		AddressType: discovery.AddressTypeIPv4,
+		Endpoints: []discovery.Endpoint{{
+			Addresses: []string{"10.0.1.1"},
+			Conditions: discovery.EndpointConditions{
+				Ready:       utilpointer.BoolPtr(false),
+				Serving:     utilpointer.BoolPtr(true),
+				Terminating: utilpointer.BoolPtr(false),
+			},
+			NodeName: utilpointer.StringPtr(testHostName),
+		}, {
+			Addresses: []string{"10.0.1.2"},
+			Conditions: discovery.EndpointConditions{
+				Ready:       utilpointer.BoolPtr(false),
+				Serving:     utilpointer.BoolPtr(true),
+				Terminating: utilpointer.BoolPtr(true),
+			},
+			NodeName: utilpointer.StringPtr(testHostName),
+		}, {
+			Addresses: []string{"10.0.1.3"},
+			Conditions: discovery.EndpointConditions{
+				Ready:       utilpointer.BoolPtr(false),
+				Serving:     utilpointer.BoolPtr(true),
+				Terminating: utilpointer.BoolPtr(true),
+			},
+			NodeName: utilpointer.StringPtr(testHostName),
+		}, { // not ready endpoints should be ignored
+			Addresses: []string{"10.0.1.4"},
+			Conditions: discovery.EndpointConditions{
+				Ready:       utilpointer.BoolPtr(false),
+				Serving:     utilpointer.BoolPtr(false),
+				Terminating: utilpointer.BoolPtr(true),
+			},
+			NodeName: utilpointer.StringPtr(testHostName),
+		}},
+	}
+
+	proxier.setInitialized(false)
+	proxier.OnEndpointSliceUpdate(endpointSlice, endpointSliceTerminating)
+	proxier.setInitialized(true)
+	proxier.syncProxyRules()
+
+	sVc = proxier.serviceMap[svcPortName]
+	svcInfo, ok = sVc.(*serviceInfo)
+	if !ok {
+		t.Errorf("Failed to cast serviceInfo %q", svcPortName.String())
+
+	} else { //service has all endpoints on terminating so the lb policy should not have been applied
+		if svcInfo.policyApplied {
+			t.Errorf("Service ns1/svc1:p80 has no endpoint information available, but policies are applied. Unexpected behaviour!")
+		}
 	}
 }
 
@@ -1308,4 +2433,15 @@ func makeTestEndpointSlice(namespace, name string, sliceNum int, epsFunc func(*d
 	}
 	epsFunc(eps)
 	return eps
+}
+
+func addTestPort(array []v1.ServicePort, name string, protocol v1.Protocol, port, nodeport int32, targetPort int) []v1.ServicePort {
+	svcPort := v1.ServicePort{
+		Name:       name,
+		Protocol:   protocol,
+		Port:       port,
+		NodePort:   nodeport,
+		TargetPort: intstr.FromInt(targetPort),
+	}
+	return append(array, svcPort)
 }
