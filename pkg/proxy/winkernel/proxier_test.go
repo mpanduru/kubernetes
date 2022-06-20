@@ -53,6 +53,9 @@ const (
 	svcExternalIPs         = "50.60.70.81"
 	svcLBIP                = "11.21.31.41"
 	svcHealthCheckNodePort = 30000
+	LbInternalPort         = 0x50
+	LbExternalPort         = 0x50
+	LbTCPProtocol          = 0x6
 )
 
 //
@@ -744,6 +747,8 @@ func TestCreateLoadBalancer(t *testing.T) {
 		t.Error(err)
 	}
 
+	t.Logf("%#v", LoadBalancer)
+
 	diff := assertHCNDiff(*LoadBalancer, *expectedLoadBalancer)
 	if diff != "" {
 		t.Errorf("GetLoadBalancerByID(%s) returned a different LoadBalancer. Diff: %s ", expectedLoadBalancer.Id, diff)
@@ -814,6 +819,15 @@ func TestCreateDsrLoadBalancer(t *testing.T) {
 		}
 	}
 
+	expectedPortMapping := &hcn.LoadBalancerPortMapping{
+		Protocol:     LbTCPProtocol,
+		InternalPort: LbInternalPort,
+		ExternalPort: LbExternalPort,
+		Flags:        hcn.LoadBalancerPortMappingFlagsNone,
+	}
+
+	expectedPortMappings := []hcn.LoadBalancerPortMapping{*expectedPortMapping}
+
 	expectedLoadBalancer := &hcn.HostComputeLoadBalancer{
 		Id:                   guid,
 		HostComputeEndpoints: []string{guid},
@@ -823,6 +837,8 @@ func TestCreateDsrLoadBalancer(t *testing.T) {
 			Minor: 0,
 		},
 		FrontendVIPs: []string{svcLBIP},
+		Flags:        hcn.LoadBalancerFlagsDSR,
+		PortMappings: expectedPortMappings,
 	}
 
 	LoadBalancer, err := testHNS.hcninstance.GetLoadBalancerByID(guid)
