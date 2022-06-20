@@ -1161,6 +1161,27 @@ func TestNodePort(t *testing.T) {
 			t.Errorf("%v does not match %v", svcInfo.nodePorthnsID, guid)
 		}
 	}
+
+	expectedLoadBalancer := &hcn.HostComputeLoadBalancer{
+		Id:                   guid,
+		HostComputeEndpoints: []string{guid},
+		SourceVIP:            sourceVip,
+		SchemaVersion: hcn.SchemaVersion{
+			Major: 2,
+			Minor: 0,
+		},
+		FrontendVIPs: []string{svcIP},
+	}
+
+	LoadBalancer, err := testHNS.hcninstance.GetLoadBalancerByID(guid)
+	if err != nil {
+		t.Error(err)
+	}
+
+	diff := assertHCNDiff(*LoadBalancer, *expectedLoadBalancer)
+	if diff != "" {
+		t.Errorf("GetLoadBalancerByID(%s) returned a different LoadBalancer. Diff: %s ", expectedLoadBalancer.Id, diff)
+	}
 }
 
 func TestNodePortReject(t *testing.T) {
@@ -1194,6 +1215,16 @@ func TestNodePortReject(t *testing.T) {
 	if ok {
 		t.Errorf("Service ns1/svc1:p80 shoud be REJECTED. Unexpected behaviour!")
 	}
+
+	//there should not be created any hcn instances because the service was rejected
+	LoadBalancers, err := testHNS.hcninstance.ListLoadBalancers()
+	if err != nil {
+		t.Error(err)
+	}
+
+	if len(LoadBalancers) != 0 {
+		t.Errorf("Service ns1/svc1:p80 shoud be REJECTED. Unexpected behaviour!")
+	}
 }
 
 func TestClusterIpReject(t *testing.T) {
@@ -1223,6 +1254,16 @@ func TestClusterIpReject(t *testing.T) {
 	_, ok := svc.(*serviceInfo)
 	//The ClusterIp should be rejected so the casting to serviceInfo should not be possible
 	if ok {
+		t.Errorf("Service ns1/svc1:p80 shoud be REJECTED. Unexpected behaviour!")
+	}
+
+	//there should not be created any hcn instances because the service was rejected
+	LoadBalancers, err := testHNS.hcninstance.ListLoadBalancers()
+	if err != nil {
+		t.Error(err)
+	}
+
+	if len(LoadBalancers) != 0 {
 		t.Errorf("Service ns1/svc1:p80 shoud be REJECTED. Unexpected behaviour!")
 	}
 }
@@ -1309,6 +1350,16 @@ func TestExternalIPsReject(t *testing.T) {
 	svc := proxier.serviceMap[svcPortName]
 	_, ok := svc.(*serviceInfo) //The ExternalIP should be rejected so the casting to serviceInfo should not be possible
 	if ok {
+		t.Errorf("Service ns1/svc1:p80 shoud be REJECTED. Unexpected behaviour!")
+	}
+
+	//there should not be created any hcn instances because the service was rejected
+	LoadBalancers, err := testHNS.hcninstance.ListLoadBalancers()
+	if err != nil {
+		t.Error(err)
+	}
+
+	if len(LoadBalancers) != 0 {
 		t.Errorf("Service ns1/svc1:p80 shoud be REJECTED. Unexpected behaviour!")
 	}
 }
