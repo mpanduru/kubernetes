@@ -34,6 +34,7 @@ import (
 	"k8s.io/apiserver/pkg/server/healthz"
 	cacheddiscovery "k8s.io/client-go/discovery/cached"
 	"k8s.io/client-go/informers"
+	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/metadata/metadatainformer"
 	"k8s.io/client-go/restmapper"
@@ -45,6 +46,7 @@ import (
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/cli/globalflag"
 	"k8s.io/component-base/configz"
+	controllersmetrics "k8s.io/component-base/metrics/prometheus/controllers"
 	"k8s.io/component-base/term"
 	"k8s.io/component-base/version"
 	"k8s.io/component-base/version/verflag"
@@ -142,6 +144,11 @@ func Run(c *cloudcontrollerconfig.CompletedConfig, cloud cloudprovider.Interface
 	// To help debugging, immediately log version
 	klog.Infof("Version: %+v", version.Get())
 
+	// Start events processing pipeline.
+	c.EventBroadcaster.StartStructuredLogging(0)
+	c.EventBroadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: c.Client.CoreV1().Events("")})
+	defer c.EventBroadcaster.Shutdown()
+
 	// setup /configz endpoint
 	if cz, err := configz.New(ConfigzName); err == nil {
 		cz.Set(c.ComponentConfig)
@@ -182,8 +189,10 @@ func Run(c *cloudcontrollerconfig.CompletedConfig, cloud cloudprovider.Interface
 	}
 
 	if !c.ComponentConfig.Generic.LeaderElection.LeaderElect {
-		run(context.TODO(), controllerInitializers)
-		panic("unreachable")
+		ctx, _ := wait.ContextForChannel(stopCh)
+		run(ctx, controllerInitializers)
+		<-stopCh
+		return nil
 	}
 
 	// Identity used to distinguish between multiple cloud controller manager instances
@@ -251,7 +260,8 @@ func Run(c *cloudcontrollerconfig.CompletedConfig, cloud cloudprovider.Interface
 			})
 	}
 
-	select {}
+	<-stopCh
+	return nil
 }
 
 // startControllers starts the cloud specific controller loops.
@@ -304,7 +314,8 @@ func startControllers(ctx context.Context, cloud cloudprovider.Interface, contro
 	c.SharedInformers.Start(stopCh)
 	controllerContext.InformerFactory.Start(controllerContext.Stop)
 
-	select {}
+	<-stopCh
+	return nil
 }
 
 // InitCloudFunc is used to initialize cloud
@@ -360,7 +371,7 @@ func StartCloudNodeControllerWrapper(initContext ControllerInitContext, complete
 // StartCloudNodeLifecycleControllerWrapper is used to take cloud config as input and start cloud node lifecycle controller
 func StartCloudNodeLifecycleControllerWrapper(initContext ControllerInitContext, completedConfig *cloudcontrollerconfig.CompletedConfig, cloud cloudprovider.Interface) InitFunc {
 	return func(ctx context.Context, controllerContext genericcontrollermanager.ControllerContext) (controller.Interface, bool, error) {
-		return startCloudNodeLifecycleController(ctx, initContext, completedConfig, cloud)
+		return startCloudNodeLifecycleController(ctx, initContext, controllerContext, completedConfig, cloud)
 	}
 }
 
@@ -447,6 +458,7 @@ func CreateControllerContext(s *cloudcontrollerconfig.CompletedConfig, clientBui
 		Stop:                            stop,
 		InformersStarted:                make(chan struct{}),
 		ResyncPeriod:                    ResyncPeriod(s),
+		ControllerManagerMetrics:        controllersmetrics.NewControllerManagerMetrics("cloud-controller-manager"),
 	}
 	return ctx, nil
 }
